@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Script de prueba para verificar conectividad con Kafka y MariaDB
 """

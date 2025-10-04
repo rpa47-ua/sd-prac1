@@ -1,6 +1,4 @@
-"""
-Módulo de gestión de base de datos para EV_Central
-"""
+"""Gestión de base de datos para EV_Central"""
 import pymysql
 from typing import List, Dict, Optional
 
@@ -15,34 +13,24 @@ class Database:
         self.connection = None
 
     def conectar(self):
-        """Establece conexión con la base de datos"""
         try:
             self.connection = pymysql.connect(
-                host=self.host,
-                port=self.port,
-                user=self.user,
-                password=self.password,
-                database=self.database,
-                charset='utf8mb4',
-                cursorclass=pymysql.cursors.DictCursor,
-                autocommit=True
+                host=self.host, port=self.port, user=self.user, password=self.password,
+                database=self.database, charset='utf8mb4',
+                cursorclass=pymysql.cursors.DictCursor, autocommit=True
             )
-            print(f"✓ Conectado a la base de datos {self.database}")
+            print(f"✓ Conectado a BD {self.database}")
             return True
         except Exception as e:
-            print(f"✗ Error conectando a la base de datos: {e}")
+            print(f"✗ Error BD: {e}")
             return False
 
     def desconectar(self):
-        """Cierra la conexión con la base de datos"""
         if self.connection:
             self.connection.close()
-            print("✓ Desconectado de la base de datos")
-
-    # ==================== CHARGING POINTS ====================
+            print("✓ Desconectado de BD")
 
     def obtener_todos_los_cps(self) -> List[Dict]:
-        """Obtiene todos los puntos de recarga"""
         try:
             with self.connection.cursor() as cursor:
                 cursor.execute("SELECT * FROM charging_points")
@@ -52,44 +40,37 @@ class Database:
             return []
 
     def obtener_cp(self, cp_id: str) -> Optional[Dict]:
-        """Obtiene un punto de recarga específico"""
         try:
             with self.connection.cursor() as cursor:
                 cursor.execute("SELECT * FROM charging_points WHERE id = %s", (cp_id,))
                 return cursor.fetchone()
         except Exception as e:
-            print(f"Error obteniendo CP {cp_id}: {e}")
+            print(f"Error obteniendo CP: {e}")
             return None
 
     def registrar_cp(self, cp_id: str, ubicacion: str, precio_kwh: float = 0.350):
-        """Registra un nuevo punto de recarga"""
         try:
             with self.connection.cursor() as cursor:
                 sql = """INSERT INTO charging_points (id, ubicacion, precio_kwh, estado)
                          VALUES (%s, %s, %s, 'desconectado')
                          ON DUPLICATE KEY UPDATE ubicacion = %s, precio_kwh = %s"""
                 cursor.execute(sql, (cp_id, ubicacion, precio_kwh, ubicacion, precio_kwh))
-                print(f"✓ CP {cp_id} registrado en BD")
+                print(f"✓ CP {cp_id} registrado")
                 return True
         except Exception as e:
             print(f"Error registrando CP: {e}")
             return False
 
     def actualizar_estado_cp(self, cp_id: str, estado: str):
-        """Actualiza el estado de un CP"""
         try:
             with self.connection.cursor() as cursor:
-                sql = "UPDATE charging_points SET estado = %s WHERE id = %s"
-                cursor.execute(sql, (estado, cp_id))
+                cursor.execute("UPDATE charging_points SET estado = %s WHERE id = %s", (estado, cp_id))
                 return True
         except Exception as e:
-            print(f"Error actualizando estado CP: {e}")
+            print(f"Error actualizando estado: {e}")
             return False
 
-    # ==================== CONDUCTORES ====================
-
     def obtener_conductor(self, conductor_id: str) -> Optional[Dict]:
-        """Obtiene información de un conductor"""
         try:
             with self.connection.cursor() as cursor:
                 cursor.execute("SELECT * FROM conductores WHERE id = %s", (conductor_id,))
@@ -99,7 +80,6 @@ class Database:
             return None
 
     def registrar_conductor(self, conductor_id: str, nombre: str, apellidos: str, email: str = ""):
-        """Registra un nuevo conductor"""
         try:
             with self.connection.cursor() as cursor:
                 sql = """INSERT INTO conductores (id, nombre, apellidos, email)
@@ -111,56 +91,43 @@ class Database:
             print(f"Error registrando conductor: {e}")
             return False
 
-    # ==================== SUMINISTROS ====================
-
     def crear_suministro(self, conductor_id: str, cp_id: str) -> Optional[int]:
-        """Crea un nuevo registro de suministro"""
         try:
             with self.connection.cursor() as cursor:
-                sql = """INSERT INTO suministros (conductor_id, cp_id, estado)
-                         VALUES (%s, %s, 'autorizado')"""
-                cursor.execute(sql, (conductor_id, cp_id))
+                cursor.execute("INSERT INTO suministros (conductor_id, cp_id, estado) VALUES (%s, %s, 'autorizado')",
+                             (conductor_id, cp_id))
                 return cursor.lastrowid
         except Exception as e:
             print(f"Error creando suministro: {e}")
             return None
 
     def actualizar_suministro(self, suministro_id: int, consumo_kwh: float, importe_total: float):
-        """Actualiza el consumo e importe de un suministro en curso"""
         try:
             with self.connection.cursor() as cursor:
-                sql = """UPDATE suministros
-                         SET consumo_kwh = %s, importe_total = %s, estado = 'en_curso'
-                         WHERE id = %s"""
-                cursor.execute(sql, (consumo_kwh, importe_total, suministro_id))
+                cursor.execute("UPDATE suministros SET consumo_kwh = %s, importe_total = %s, estado = 'en_curso' WHERE id = %s",
+                             (consumo_kwh, importe_total, suministro_id))
                 return True
         except Exception as e:
             print(f"Error actualizando suministro: {e}")
             return False
 
     def finalizar_suministro(self, suministro_id: int, consumo_kwh: float, importe_total: float):
-        """Finaliza un suministro"""
         try:
             with self.connection.cursor() as cursor:
-                sql = """UPDATE suministros
-                         SET consumo_kwh = %s, importe_total = %s,
-                             fecha_fin = CURRENT_TIMESTAMP, estado = 'completado'
-                         WHERE id = %s"""
-                cursor.execute(sql, (consumo_kwh, importe_total, suministro_id))
+                cursor.execute("""UPDATE suministros SET consumo_kwh = %s, importe_total = %s,
+                                 fecha_fin = CURRENT_TIMESTAMP, estado = 'completado' WHERE id = %s""",
+                             (consumo_kwh, importe_total, suministro_id))
                 return True
         except Exception as e:
             print(f"Error finalizando suministro: {e}")
             return False
 
     def obtener_suministro_activo(self, cp_id: str) -> Optional[Dict]:
-        """Obtiene el suministro activo de un CP"""
         try:
             with self.connection.cursor() as cursor:
-                sql = """SELECT * FROM suministros
-                         WHERE cp_id = %s AND estado IN ('autorizado', 'en_curso')
-                         ORDER BY fecha_inicio DESC LIMIT 1"""
-                cursor.execute(sql, (cp_id,))
+                cursor.execute("""SELECT * FROM suministros WHERE cp_id = %s AND estado IN ('autorizado', 'en_curso')
+                                 ORDER BY fecha_inicio DESC LIMIT 1""", (cp_id,))
                 return cursor.fetchone()
         except Exception as e:
-            print(f"Error obteniendo suministro activo: {e}")
+            print(f"Error obteniendo suministro: {e}")
             return None
