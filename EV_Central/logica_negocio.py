@@ -95,22 +95,24 @@ class LogicaNegocio:
     def procesar_telemetria_cp(self, mensaje: dict):
         """
         Procesa telemetría en tiempo real de un CP durante un suministro
-        Mensaje: {'cp_id': 'CP001', 'consumo_kwh': 5.2, 'importe': 1.82}
+        Mensaje: {'cp_id': 'CP001', 'conductor_id': 'DRV001', 'consumo_actual': 5.2, 'importe_actual': 1.82}
         """
         cp_id = mensaje.get('cp_id')
-        consumo_kwh = mensaje.get('consumo_kwh', 0.0)
-        importe = mensaje.get('importe', 0.0)
+        conductor_id = mensaje.get('conductor_id')
+        consumo_actual = mensaje.get('consumo_actual', 0.0)
+        importe_actual = mensaje.get('importe_actual', 0.0)
 
         if cp_id in self.suministros_activos:
             # Actualizar valores en memoria
-            self.suministros_activos[cp_id]['consumo_actual'] = consumo_kwh
-            self.suministros_activos[cp_id]['importe_actual'] = importe
+            self.suministros_activos[cp_id]['consumo_actual'] = consumo_actual
+            self.suministros_activos[cp_id]['importe_actual'] = importe_actual
 
             # Actualizar en BD
             suministro_id = self.suministros_activos[cp_id]['suministro_id']
-            self.db.actualizar_suministro(suministro_id, consumo_kwh, importe)
+            self.db.actualizar_suministro(suministro_id, consumo_actual, importe_actual)
 
-            # (El panel visual leerá estos datos de la BD o de suministros_activos)
+            # La telemetría ya está en el topic correcto (telemetria_cp)
+            # El driver debe suscribirse a 'telemetria_cp' no 'telemtria_cp'
 
     def procesar_fin_suministro(self, mensaje: dict):
         """

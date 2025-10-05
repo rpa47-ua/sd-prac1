@@ -247,26 +247,30 @@ class PanelGUI:
             for cp in cps:
                 cp_id = cp['id']
                 ubicacion = cp['ubicacion']
-                estado = cp['estado'].upper()
+                estado_raw = cp['estado']
+                estado = estado_raw.upper()
                 precio = f"{cp['precio_kwh']:.3f}"
 
                 conductor = '-'
                 consumo = '-'
                 importe = '-'
 
+                # Si está en estado parado, mostrar "Out of Order"
+                if estado_raw == 'parado':
+                    estado = "OUT OF ORDER"
+
                 # Si está suministrando, mostrar detalles
                 if cp_id in suministros:
                     info = suministros[cp_id]
                     conductor = info['conductor_id']
-                    consumo = f"{info['consumo_actual']:.2f}"
-                    importe = f"{info['importe_actual']:.2f}"
+                    consumo = f"{info['consumo_actual']:.2f} kWh"
+                    importe = f"{info['importe_actual']:.2f} €"
 
                 # Insertar fila con color según estado
                 item = self.tree.insert('', tk.END, values=(cp_id, ubicacion, estado, precio, conductor, consumo, importe))
 
                 # Aplicar color (tags)
-                estado_lower = cp['estado']
-                self.tree.item(item, tags=(estado_lower,))
+                self.tree.item(item, tags=(estado_raw,))
 
             # Configurar colores de filas
             for estado, color in self.COLORS.items():
