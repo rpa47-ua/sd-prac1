@@ -31,7 +31,7 @@ Esto levanta:
 ### 3. Crear topics de Kafka
 
 **Windows:**
-crear_topics.bat
+crear_topics.bat (.\crear_topics.bat)
 
 ### 4. Verificar conexiones
 
