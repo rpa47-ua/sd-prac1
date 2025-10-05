@@ -220,6 +220,13 @@ class PanelGUI:
             return
 
         try:
+            # Guardar selección actual
+            selected_items = self.tree.selection()
+            selected_cp_id = None
+            if selected_items:
+                item = self.tree.item(selected_items[0])
+                selected_cp_id = item['values'][0] if item['values'] else None
+
             # Obtener estado del sistema
             estado = self.logica.obtener_estado_sistema()
             cps = estado['cps']
@@ -277,6 +284,15 @@ class PanelGUI:
                 if estado not in ['bg_main', 'bg_panel', 'text', 'accent']:
                     self.tree.tag_configure(estado, background=color, foreground='white')
 
+            # Restaurar selección si existía
+            if selected_cp_id:
+                for item in self.tree.get_children():
+                    item_values = self.tree.item(item)['values']
+                    if item_values and item_values[0] == selected_cp_id:
+                        self.tree.selection_set(item)
+                        self.tree.see(item)  # Hacer scroll si es necesario
+                        break
+
         except Exception as e:
             print(f"Error actualizando panel: {e}")
 
@@ -287,7 +303,6 @@ class PanelGUI:
     def _actualizar_manual(self):
         """Actualización manual (botón)"""
         self._actualizar_datos()
-        messagebox.showinfo("Actualizado", "Panel actualizado correctamente")
 
     def _parar_cp(self):
         """Para el CP seleccionado"""
@@ -300,23 +315,22 @@ class PanelGUI:
         cp_id = item['values'][0]
         estado = item['values'][2]
 
-        # Validaciones
+        # Validaciones rápidas
         if estado == 'DESCONECTADO':
-            messagebox.showerror("Error", f"No se puede parar el CP {cp_id}.\n\nEl CP está desconectado de la central.")
+            messagebox.showerror("Error", f"CP {cp_id} desconectado")
             return
 
-        if estado == 'PARADO':
-            messagebox.showwarning("Aviso", f"El CP {cp_id} ya está parado.")
+        if estado == 'OUT OF ORDER':
+            messagebox.showinfo("Info", f"CP {cp_id} ya está parado")
             return
 
         if estado == 'AVERIADO':
-            messagebox.showerror("Error", f"No se puede parar el CP {cp_id}.\n\nEl CP tiene una avería activa.")
+            messagebox.showerror("Error", f"CP {cp_id} averiado")
             return
 
-        confirm = messagebox.askyesno("Confirmar", f"¿Parar el CP {cp_id}?\n\nEstado actual: {estado}\n\nSi está suministrando, el servicio se interrumpirá.")
-        if confirm:
+        # Confirmación simple
+        if messagebox.askyesno("Confirmar", f"¿Parar CP {cp_id}?"):
             self.logica.parar_cp(cp_id)
-            messagebox.showinfo("Éxito", f"CP {cp_id} detenido correctamente")
             self._actualizar_datos()
 
     def _reanudar_cp(self):
@@ -330,27 +344,26 @@ class PanelGUI:
         cp_id = item['values'][0]
         estado = item['values'][2]
 
-        # Validaciones
+        # Validaciones rápidas
         if estado == 'DESCONECTADO':
-            messagebox.showerror("Error", f"No se puede reanudar el CP {cp_id}.\n\nEl CP está desconectado de la central.\n\nAsegúrate de que EV_CP_M esté ejecutándose.")
+            messagebox.showerror("Error", f"CP {cp_id} desconectado")
             return
 
         if estado == 'ACTIVADO':
-            messagebox.showinfo("Aviso", f"El CP {cp_id} ya está activo y disponible.")
+            messagebox.showinfo("Info", f"CP {cp_id} ya está activo")
             return
 
         if estado == 'SUMINISTRANDO':
-            messagebox.showwarning("Aviso", f"El CP {cp_id} está suministrando energía.\n\nNo es necesario reanudarlo.")
+            messagebox.showinfo("Info", f"CP {cp_id} suministrando")
             return
 
         if estado == 'AVERIADO':
-            messagebox.showerror("Error", f"No se puede reanudar el CP {cp_id}.\n\nEl CP tiene una avería activa.\n\nEspera a que EV_CP_M reporte recuperación.")
+            messagebox.showerror("Error", f"CP {cp_id} averiado")
             return
 
-        confirm = messagebox.askyesno("Confirmar", f"¿Reanudar el CP {cp_id}?\n\nEstado actual: {estado}")
-        if confirm:
+        # Confirmación simple
+        if messagebox.askyesno("Confirmar", f"¿Reanudar CP {cp_id}?"):
             self.logica.reanudar_cp(cp_id)
-            messagebox.showinfo("Éxito", f"CP {cp_id} reanudado correctamente")
             self._actualizar_datos()
 
     def detener(self):
