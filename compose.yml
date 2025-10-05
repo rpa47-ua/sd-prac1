@@ -34,7 +34,6 @@ services:
       MARIADB_USER: evuser
       MARIADB_PASSWORD: evpass123
     volumes:
-      - ./mariadb_data:/var/lib/mysql
       - ./init-db:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
