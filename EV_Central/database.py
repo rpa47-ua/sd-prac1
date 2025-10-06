@@ -48,14 +48,14 @@ class Database:
             print(f"Error obteniendo CP: {e}")
             return None
 
-    def registrar_cp(self, cp_id: str, ubicacion: str, precio_kwh: float = 0.350):
+    def registrar_cp(self, cp_id: str, ubicacion: str, latitud: float = 0.0, longitud: float = 0.0, precio_kwh: float = 0.350):
         try:
             with self.connection.cursor() as cursor:
-                sql = """INSERT INTO charging_points (id, ubicacion, precio_kwh, estado)
-                         VALUES (%s, %s, %s, 'desconectado')
-                         ON DUPLICATE KEY UPDATE ubicacion = %s, precio_kwh = %s"""
-                cursor.execute(sql, (cp_id, ubicacion, precio_kwh, ubicacion, precio_kwh))
-                print(f"✓ CP {cp_id} registrado")
+                sql = """INSERT INTO charging_points (id, ubicacion, latitud, longitud, precio_kwh, estado)
+                         VALUES (%s, %s, %s, %s, %s, 'desconectado')
+                         ON DUPLICATE KEY UPDATE precio_kwh = %s"""
+                cursor.execute(sql, (cp_id, ubicacion, latitud, longitud, precio_kwh, precio_kwh))
+                print(f"✓ CP {cp_id} registrado en ({latitud:.2f}, {longitud:.2f})")
                 return True
         except Exception as e:
             print(f"Error registrando CP: {e}")
