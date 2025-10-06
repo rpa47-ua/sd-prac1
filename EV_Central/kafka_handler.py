@@ -2,8 +2,8 @@
 Módulo de gestión de Kafka para EV_Central
 Maneja productores y consumidores de mensajes
 """
-from confluent_kafka import Producer, Consumer, KafkaException
-from confluent_kafka.admin import AdminClient, NewTopic
+from kafka import KafkaProducer, KafkaConsumer
+from kafka.admin import KafkaAdminClient, NewTopic
 from json import dumps, loads
 import threading
 
@@ -19,29 +19,24 @@ class KafkaHandler:
     def crear_topics_si_no_existen(self, topics: list):
         """Crea los topics de Kafka si no existen"""
         try:
-            admin_client = AdminClient({'bootstrap.servers': self.bootstrap_servers})
+            admin_client = KafkaAdminClient(bootstrap_servers=self.bootstrap_servers)
 
             # Obtener topics existentes
-            metadata = admin_client.list_topics(timeout=5)
-            existing_topics = set(metadata.topics.keys())
+            existing_topics = admin_client.list_topics()
 
             # Crear nuevos topics
             new_topics = [
-                NewTopic(topic, num_partitions=1, replication_factor=1)
+                NewTopic(name=topic, num_partitions=1, replication_factor=1)
                 for topic in topics if topic not in existing_topics
             ]
 
             if new_topics:
-                fs = admin_client.create_topics(new_topics)
-                for topic, f in fs.items():
-                    try:
-                        f.result()
-                        print(f"✓ Topic '{topic}' creado")
-                    except Exception as e:
-                        print(f"⚠ Topic '{topic}': {e}")
+                admin_client.create_topics(new_topics=new_topics, validate_only=False)
+                print(f"✓ Topics creados: {', '.join([t.name for t in new_topics])}")
             else:
                 print("✓ Todos los topics ya existen")
 
+            admin_client.close()
             return True
         except Exception as e:
             print(f"⚠ No se pudieron crear topics automáticamente: {e}")
@@ -51,10 +46,10 @@ class KafkaHandler:
     def inicializar_producer(self):
         """Inicializa el productor de Kafka"""
         try:
-            self.producer = Producer({
-                'bootstrap.servers': self.bootstrap_servers,
-                'client.id': 'ev_central_producer'
-            })
+            self.producer = KafkaProducer(
+                bootstrap_servers=self.bootstrap_servers,
+                value_serializer=lambda v: dumps(v).encode('utf-8')
+            )
             print(f"✓ Productor Kafka inicializado en {self.bootstrap_servers}")
             return True
         except Exception as e:
@@ -64,12 +59,13 @@ class KafkaHandler:
     def inicializar_consumer(self, group_id: str = 'ev_central_group'):
         """Inicializa el consumidor de Kafka"""
         try:
-            self.consumer = Consumer({
-                'bootstrap.servers': self.bootstrap_servers,
-                'group.id': group_id,
-                'auto.offset.reset': 'latest',
-                'enable.auto.commit': True
-            })
+            self.consumer = KafkaConsumer(
+                bootstrap_servers=self.bootstrap_servers,
+                group_id=group_id,
+                auto_offset_reset='latest',
+                enable_auto_commit=True,
+                value_deserializer=lambda m: loads(m.decode('utf-8'))
+            )
             print(f"✓ Consumidor Kafka inicializado")
             return True
         except Exception as e:
@@ -89,23 +85,12 @@ class KafkaHandler:
             return False
 
         try:
-            self.producer.produce(
-                topic,
-                value=dumps(mensaje).encode('utf-8'),
-                callback=self._delivery_callback
-            )
-            self.producer.poll(0)
+            self.producer.send(topic, mensaje)
+            self.producer.flush()
             return True
         except Exception as e:
             print(f"✗ Error enviando mensaje a {topic}: {e}")
             return False
-
-    def _delivery_callback(self, err, msg):
-        """Callback para confirmar entrega de mensajes"""
-        if err:
-            print(f"✗ Error en entrega: {err}")
-        # else:
-        #     print(f"✓ Mensaje entregado a {msg.topic()}")
 
     def registrar_callback(self, topic: str, callback_func):
         """Registra una función callback para procesar mensajes de un topic"""
@@ -122,24 +107,19 @@ class KafkaHandler:
         """Bucle de consumo de mensajes (ejecutado en hilo separado)"""
         while self.running:
             try:
-                msg = self.consumer.poll(timeout=1.0)
+                # Poll por mensajes (timeout de 1 segundo)
+                mensajes = self.consumer.poll(timeout_ms=1000)
 
-                if msg is None:
-                    continue
+                for topic_partition, records in mensajes.items():
+                    for record in records:
+                        topic = record.topic
+                        mensaje = record.value
 
-                if msg.error():
-                    print(f"✗ Error Kafka: {msg.error()}")
-                    continue
-
-                # Decodificar mensaje
-                topic = msg.topic()
-                mensaje = loads(msg.value().decode('utf-8'))
-
-                # Ejecutar callback correspondiente
-                if topic in self.callbacks:
-                    self.callbacks[topic](mensaje)
-                else:
-                    print(f"⚠ Mensaje recibido de {topic} sin callback: {mensaje}")
+                        # Ejecutar callback correspondiente
+                        if topic in self.callbacks:
+                            self.callbacks[topic](mensaje)
+                        else:
+                            print(f"⚠ Mensaje recibido de {topic} sin callback: {mensaje}")
 
             except Exception as e:
                 print(f"✗ Error consumiendo mensaje: {e}")
