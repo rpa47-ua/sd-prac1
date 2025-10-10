@@ -19,16 +19,16 @@ class Database:
                 database=self.database, charset='utf8mb4',
                 cursorclass=pymysql.cursors.DictCursor, autocommit=True
             )
-            print(f"✓ Conectado a BD {self.database}")
+            print(f"[OK] Conectado a BD {self.database}")
             return True
         except Exception as e:
-            print(f"✗ Error BD: {e}")
+            print(f"[ERROR] Error BD: {e}")
             return False
 
     def desconectar(self):
         if self.connection:
             self.connection.close()
-            print("✓ Desconectado de BD")
+            print("[OK] Desconectado de BD")
 
     def obtener_todos_los_cps(self) -> List[Dict]:
         try:
@@ -55,7 +55,7 @@ class Database:
                          VALUES (%s, %s, %s, %s, 'desconectado')
                          ON DUPLICATE KEY UPDATE precio_kwh = %s"""
                 cursor.execute(sql, (cp_id, latitud, longitud, precio_kwh, precio_kwh))
-                print(f"✓ CP {cp_id} registrado en ({latitud:.6f}, {longitud:.6f})")
+                print(f"[OK] CP {cp_id} registrado en ({latitud:.6f}, {longitud:.6f})")
                 return True
         except Exception as e:
             print(f"Error registrando CP: {e}")

@@ -43,7 +43,7 @@ class PanelGUI:
         # Actualizar datos cada 2 segundos
         self._actualizar_datos()
 
-        print("✓ Panel GUI iniciado")
+        print("[OK] Panel GUI iniciado")
 
         # Iniciar el mainloop
         self.root.mainloop()
@@ -124,13 +124,12 @@ class PanelGUI:
             fg=self.COLORS['text']
         ).pack(anchor=tk.W, pady=(0, 10))
 
-        # Crear Treeview
-        columns = ('ID', 'Ubicación', 'GPS', 'Estado', 'Precio €/kWh', 'Conductor', 'Consumo kWh', 'Importe €')
+        # Crear Treeview (sin columna Ubicacion)
+        columns = ('ID', 'GPS', 'Estado', 'Precio €/kWh', 'Conductor', 'Consumo kWh', 'Importe €')
         self.tree = ttk.Treeview(table_frame, columns=columns, show='headings', height=15)
 
         # Configurar columnas
         self.tree.heading('ID', text='ID')
-        self.tree.heading('Ubicación', text='Ubicación')
         self.tree.heading('GPS', text='GPS (Lat, Lon)')
         self.tree.heading('Estado', text='Estado')
         self.tree.heading('Precio €/kWh', text='Precio €/kWh')
@@ -139,8 +138,7 @@ class PanelGUI:
         self.tree.heading('Importe €', text='Importe €')
 
         self.tree.column('ID', width=80, anchor=tk.CENTER)
-        self.tree.column('Ubicación', width=220, anchor=tk.W)
-        self.tree.column('GPS', width=120, anchor=tk.CENTER)
+        self.tree.column('GPS', width=150, anchor=tk.CENTER)
         self.tree.column('Estado', width=140, anchor=tk.CENTER)
         self.tree.column('Precio €/kWh', width=110, anchor=tk.CENTER)
         self.tree.column('Conductor', width=100, anchor=tk.CENTER)
@@ -255,7 +253,6 @@ class PanelGUI:
             # Llenar tabla
             for cp in cps:
                 cp_id = cp['id']
-                ubicacion = cp['ubicacion']
 
                 # Formato abreviado de coordenadas GPS (2 decimales)
                 latitud = cp.get('latitud', 0.0)
@@ -281,8 +278,8 @@ class PanelGUI:
                     consumo = f"{info['consumo_actual']:.2f} kWh"
                     importe = f"{info['importe_actual']:.2f} €"
 
-                # Insertar fila con color según estado (añadir columna GPS)
-                item = self.tree.insert('', tk.END, values=(cp_id, ubicacion, gps_coords, estado, precio, conductor, consumo, importe))
+                # Insertar fila con color segun estado (sin columna ubicacion)
+                item = self.tree.insert('', tk.END, values=(cp_id, gps_coords, estado, precio, conductor, consumo, importe))
 
                 # Aplicar color (tags)
                 self.tree.item(item, tags=(estado_raw,))
@@ -378,6 +375,9 @@ class PanelGUI:
         """Detiene el panel GUI"""
         self.running = False
         if self.root:
-            self.root.quit()
-            self.root.destroy()
-        print("✓ Panel GUI detenido")
+            try:
+                self.root.quit()
+                self.root.destroy()
+            except:
+                pass  # Ya fue destruido
+        print("[OK] Panel GUI detenido")

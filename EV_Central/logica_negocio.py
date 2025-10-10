@@ -24,12 +24,12 @@ class LogicaNegocio:
 
         if cp is None:
             # CP no existe, registrarlo con coordenadas GPS
-            print(f"📝 Registrando nuevo CP: {cp_id} en ({latitud:.6f}, {longitud:.6f})")
+            print(f"Registrando nuevo CP: {cp_id} en ({latitud:.6f}, {longitud:.6f})")
             self.db.registrar_cp(cp_id, latitud, longitud)
 
         # Actualizar estado a activado
         self.db.actualizar_estado_cp(cp_id, 'activado')
-        print(f"✓ CP {cp_id} autenticado y activado")
+        print(f"[OK] CP {cp_id} autenticado y activado")
         return True
 
     def procesar_solicitud_suministro(self, mensaje: dict):
@@ -43,24 +43,24 @@ class LogicaNegocio:
         cp_id = mensaje.get('cp_id')
         origen = mensaje.get('origen', 'CONDUCTOR')  # Por defecto asume que viene del conductor
 
-        print(f"\n📋 Procesando solicitud [{origen}]: Conductor {conductor_id} → CP {cp_id}")
+        print(f"\nProcesando solicitud [{origen}]: Conductor {conductor_id} -> CP {cp_id}")
 
         # 1. Verificar que el conductor existe (si no, auto-registrar)
         conductor = self.db.obtener_conductor(conductor_id)
         if not conductor:
-            print(f"📝 Auto-registrando conductor {conductor_id}")
+            print(f"Auto-registrando conductor {conductor_id}")
             self.db.registrar_conductor(conductor_id)
 
         # 2. Verificar que el CP existe
         cp = self.db.obtener_cp(cp_id)
         if not cp:
-            print(f"✗ CP {cp_id} no existe")
+            print(f"[ERROR] CP {cp_id} no existe")
             self._enviar_respuesta_solicitud(conductor_id, cp_id, False, "CP no encontrado", origen)
             return
 
-        # 3. Verificar que el CP está disponible
+        # 3. Verificar que el CP esta disponible
         if cp['estado'] != 'activado':
-            print(f"✗ CP {cp_id} no está disponible (estado: {cp['estado']})")
+            print(f"[ERROR] CP {cp_id} no esta disponible (estado: {cp['estado']})")
             self._enviar_respuesta_solicitud(conductor_id, cp_id, False, f"CP no disponible: {cp['estado']}", origen)
             return
 
@@ -76,7 +76,7 @@ class LogicaNegocio:
             'importe_actual': 0.0
         }
 
-        print(f"✓ Suministro autorizado (ID: {suministro_id})")
+        print(f"[OK] Suministro autorizado (ID: {suministro_id})")
 
         # 5. Notificar según el origen
         self._enviar_respuesta_solicitud(conductor_id, cp_id, True, "Suministro autorizado", origen)
@@ -143,7 +143,7 @@ class LogicaNegocio:
         consumo_kwh = mensaje.get('consumo_kwh', 0.0)
         importe = mensaje.get('importe', 0.0)
 
-        print(f"\n🏁 Finalizando suministro en {cp_id}")
+        print(f"\n[FIN] Finalizando suministro en {cp_id}")
 
         if cp_id in self.suministros_activos:
             suministro_id = self.suministros_activos[cp_id]['suministro_id']
@@ -167,7 +167,7 @@ class LogicaNegocio:
             # Eliminar de suministros activos
             del self.suministros_activos[cp_id]
 
-            print(f"✓ Suministro finalizado. Ticket enviado a {conductor_id}")
+            print(f"[OK] Suministro finalizado. Ticket enviado a {conductor_id}")
 
     def procesar_averia_cp(self, mensaje: dict):
         """
@@ -175,9 +175,9 @@ class LogicaNegocio:
         Mensaje: {'cp_id': 'CP001', 'descripcion': 'Fallo en sensor'}
         """
         cp_id = mensaje.get('cp_id')
-        descripcion = mensaje.get('descripcion', 'Avería desconocida')
+        descripcion = mensaje.get('descripcion', 'Averia desconocida')
 
-        print(f"\n⚠️ AVERÍA en {cp_id}: {descripcion}")
+        print(f"\n[AVISO] AVERIA en {cp_id}: {descripcion}")
 
         # Actualizar estado en BD
         self.db.actualizar_estado_cp(cp_id, 'averiado')
@@ -207,14 +207,14 @@ class LogicaNegocio:
         Mensaje: {'cp_id': 'CP001'}
         """
         cp_id = mensaje.get('cp_id')
-        print(f"\n✓ CP {cp_id} recuperado de avería")
+        print(f"\n[OK] CP {cp_id} recuperado de averia")
 
         # Volver a estado activado
         self.db.actualizar_estado_cp(cp_id, 'activado')
 
     def parar_cp(self, cp_id: str):
-        """Envía comando para parar un CP manualmente"""
-        print(f"🛑 Parando CP {cp_id}")
+        """Envia comando para parar un CP manualmente"""
+        print(f"[STOP] Parando CP {cp_id}")
 
         self.kafka.enviar_mensaje('comandos_cp', {
             'tipo': 'PARAR',
@@ -224,8 +224,8 @@ class LogicaNegocio:
         self.db.actualizar_estado_cp(cp_id, 'parado')
 
     def reanudar_cp(self, cp_id: str):
-        """Envía comando para reanudar un CP"""
-        print(f"▶️ Reanudando CP {cp_id}")
+        """Envia comando para reanudar un CP"""
+        print(f"[PLAY] Reanudando CP {cp_id}")
 
         self.kafka.enviar_mensaje('comandos_cp', {
             'tipo': 'REANUDAR',
@@ -246,14 +246,14 @@ class LogicaNegocio:
         Recupera el estado del sistema desde la BBDD tras un reinicio de la Central.
         Esto es CRÍTICO para poder enviar tickets pendientes si la Central se cayó.
         """
-        print("\n🔄 Recuperando estado del sistema desde BBDD...")
+        print("\nRecuperando estado del sistema desde BBDD...")
 
-        # Recuperar suministros que estaban en curso cuando se cayó el sistema
+        # Recuperar suministros que estaban en curso cuando se cayo el sistema
         try:
             suministros_pendientes = self.db.obtener_suministros_activos()
 
             if suministros_pendientes:
-                print(f"📋 Se encontraron {len(suministros_pendientes)} suministros activos en BBDD")
+                print(f"Se encontraron {len(suministros_pendientes)} suministros activos en BBDD")
 
                 for suministro in suministros_pendientes:
                     cp_id = suministro['cp_id']
@@ -268,10 +268,10 @@ class LogicaNegocio:
                         'importe_actual': float(suministro.get('importe_total', 0.0))
                     }
 
-                    print(f"  ✓ Recuperado: CP {cp_id} - Conductor {conductor_id} (ID: {suministro_id})")
+                    print(f"  [OK] Recuperado: CP {cp_id} - Conductor {conductor_id} (ID: {suministro_id})")
             else:
-                print("✓ No hay suministros activos pendientes")
+                print("[OK] No hay suministros activos pendientes")
 
         except Exception as e:
-            print(f"⚠️ Error recuperando estado: {e}")
+            print(f"[AVISO] Error recuperando estado: {e}")
             # No es crítico, el sistema puede continuar

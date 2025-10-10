@@ -37,11 +37,11 @@ class EVCentral:
     def inicializar(self):
         """Inicializa todos los componentes del sistema"""
         print("\n" + "=" * 60)
-        print("🔋 EV_CENTRAL - Sistema de Gestión de Red de Carga")
+        print("EV_CENTRAL - Sistema de Gestion de Red de Carga")
         print("=" * 60 + "\n")
 
         # 1. Conectar a la base de datos
-        print("📊 Conectando a la base de datos...")
+        print("Conectando a la base de datos...")
         self.db = Database(
             host=self.db_host,
             port=self.db_port,
@@ -51,27 +51,27 @@ class EVCentral:
         )
 
         if not self.db.conectar():
-            print("✗ Error crítico: No se pudo conectar a la BD")
+            print("[ERROR] Error critico: No se pudo conectar a la BD")
             return False
 
         # 2. Inicializar Kafka
-        print("\n📡 Inicializando Kafka...")
+        print("\nInicializando Kafka...")
         self.kafka = KafkaHandler(self.kafka_broker)
 
         if not self.kafka.inicializar_producer():
-            print("✗ Error crítico: No se pudo inicializar productor Kafka")
+            print("[ERROR] Error critico: No se pudo inicializar productor Kafka")
             return False
 
         if not self.kafka.inicializar_consumer():
-            print("✗ Error crítico: No se pudo inicializar consumidor Kafka")
+            print("[ERROR] Error critico: No se pudo inicializar consumidor Kafka")
             return False
 
         # 3. Inicializar lógica de negocio
-        print("\n🧠 Inicializando lógica de negocio...")
+        print("\nInicializando logica de negocio...")
         self.logica = LogicaNegocio(self.db, self.kafka)
 
         # 4. Crear topics de Kafka si no existen
-        print("\n📋 Creando topics de Kafka...")
+        print("\nCreando topics de Kafka...")
         all_topics = [
             'solicitudes_suministro', 'respuestas_conductor', 'respuestas_cp',
             'comandos_cp', 'telemetria_cp', 'fin_suministro', 'averias',
@@ -80,7 +80,7 @@ class EVCentral:
         self.kafka.crear_topics_si_no_existen(all_topics)
 
         # 5. Configurar callbacks de Kafka
-        print("\n📥 Configurando callbacks de Kafka...")
+        print("\nConfigurando callbacks de Kafka...")
         self.kafka.registrar_callback('solicitudes_suministro', self.logica.procesar_solicitud_suministro)
         self.kafka.registrar_callback('telemetria_cp', self.logica.procesar_telemetria_cp)
         self.kafka.registrar_callback('fin_suministro', self.logica.procesar_fin_suministro)
@@ -91,19 +91,19 @@ class EVCentral:
         self.kafka.suscribirse(topics)
 
         # 6. Iniciar servidor socket
-        print(f"\n🔌 Iniciando servidor socket en puerto {self.puerto_socket}...")
+        print(f"\nIniciando servidor socket en puerto {self.puerto_socket}...")
         self.servidor = ServidorSocket(self.puerto_socket, self.logica.autenticar_cp)
 
         if not self.servidor.iniciar():
-            print("✗ Error crítico: No se pudo iniciar servidor socket")
+            print("[ERROR] Error critico: No se pudo iniciar servidor socket")
             return False
 
-        # 7. Iniciar panel de monitorización GUI
-        print("\n📺 Inicializando panel de monitorización GUI...")
+        # 7. Iniciar panel de monitorizacion GUI
+        print("\nInicializando panel de monitorizacion GUI...")
         self.panel = PanelGUI(self.logica)
 
         print("\n" + "=" * 60)
-        print("✓ SISTEMA INICIADO CORRECTAMENTE")
+        print("SISTEMA INICIADO CORRECTAMENTE")
         print("=" * 60 + "\n")
 
         return True
@@ -115,15 +115,15 @@ class EVCentral:
         # Iniciar consumidor de Kafka en segundo plano
         self.kafka.iniciar_consumidor_async()
 
-        print("⚡ Sistema en funcionamiento.")
-        print("📱 Abriendo panel de monitorización GUI...\n")
+        print("Sistema en funcionamiento.")
+        print("Abriendo panel de monitorizacion GUI...\n")
 
         # Iniciar GUI (bloqueante - usa mainloop de Tkinter)
         try:
             self.panel.iniciar()  # Esto bloquea hasta que se cierre la ventana
 
         except KeyboardInterrupt:
-            print("\n\n⚠️ Deteniendo sistema...")
+            print("\n\nDeteniendo sistema...")
 
         finally:
             self.detener()
@@ -144,7 +144,7 @@ class EVCentral:
         if self.db:
             self.db.desconectar()
 
-        print("\n✓ Sistema detenido correctamente\n")
+        print("\nSistema detenido correctamente\n")
 
 
 def main():
@@ -173,7 +173,7 @@ def main():
     if central.inicializar():
         central.ejecutar()
     else:
-        print("✗ Error al inicializar el sistema")
+        print("[ERROR] Error al inicializar el sistema")
         sys.exit(1)
 
 

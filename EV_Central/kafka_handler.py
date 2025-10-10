@@ -32,16 +32,16 @@ class KafkaHandler:
 
             if new_topics:
                 admin_client.create_topics(new_topics=new_topics, validate_only=False)
-                print(f"✓ Topics creados: {', '.join([t.name for t in new_topics])}")
+                print(f"[OK] Topics creados: {', '.join([t.name for t in new_topics])}")
             else:
-                print("✓ Todos los topics ya existen")
+                print("[OK] Todos los topics ya existen")
 
             admin_client.close()
             return True
         except Exception as e:
-            print(f"⚠ No se pudieron crear topics automáticamente: {e}")
-            print("  Los topics se crearán automáticamente al enviar mensajes")
-            return True  # No es error crítico
+            print(f"[AVISO] No se pudieron crear topics automaticamente: {e}")
+            print("  Los topics se crearan automaticamente al enviar mensajes")
+            return True  # No es error critico
 
     def inicializar_producer(self):
         """Inicializa el productor de Kafka"""
@@ -50,10 +50,10 @@ class KafkaHandler:
                 bootstrap_servers=self.bootstrap_servers,
                 value_serializer=lambda v: dumps(v).encode('utf-8')
             )
-            print(f"✓ Productor Kafka inicializado en {self.bootstrap_servers}")
+            print(f"[OK] Productor Kafka inicializado en {self.bootstrap_servers}")
             return True
         except Exception as e:
-            print(f"✗ Error inicializando productor Kafka: {e}")
+            print(f"[ERROR] Error inicializando productor Kafka: {e}")
             return False
 
     def inicializar_consumer(self, group_id: str = 'ev_central_group'):
@@ -66,22 +66,22 @@ class KafkaHandler:
                 enable_auto_commit=True,
                 value_deserializer=lambda m: loads(m.decode('utf-8'))
             )
-            print(f"✓ Consumidor Kafka inicializado")
+            print(f"[OK] Consumidor Kafka inicializado")
             return True
         except Exception as e:
-            print(f"✗ Error inicializando consumidor Kafka: {e}")
+            print(f"[ERROR] Error inicializando consumidor Kafka: {e}")
             return False
 
     def suscribirse(self, topics: list):
         """Suscribe el consumidor a una lista de topics"""
         if self.consumer:
             self.consumer.subscribe(topics)
-            print(f"✓ Suscrito a topics: {', '.join(topics)}")
+            print(f"[OK] Suscrito a topics: {', '.join(topics)}")
 
     def enviar_mensaje(self, topic: str, mensaje: dict):
-        """Envía un mensaje a un topic de Kafka"""
+        """Envia un mensaje a un topic de Kafka"""
         if not self.producer:
-            print("✗ Productor no inicializado")
+            print("[ERROR] Productor no inicializado")
             return False
 
         try:
@@ -89,11 +89,11 @@ class KafkaHandler:
             self.producer.flush()
             return True
         except Exception as e:
-            print(f"✗ Error enviando mensaje a {topic}: {e}")
+            print(f"[ERROR] Error enviando mensaje a {topic}: {e}")
             return False
 
     def registrar_callback(self, topic: str, callback_func):
-        """Registra una función callback para procesar mensajes de un topic"""
+        """Registra una funcion callback para procesar mensajes de un topic"""
         self.callbacks[topic] = callback_func
 
     def iniciar_consumidor_async(self):
@@ -101,7 +101,7 @@ class KafkaHandler:
         self.running = True
         thread = threading.Thread(target=self._consumir_mensajes, daemon=True)
         thread.start()
-        print("✓ Consumidor Kafka ejecutándose en segundo plano")
+        print("[OK] Consumidor Kafka ejecutandose en segundo plano")
 
     def _consumir_mensajes(self):
         """Bucle de consumo de mensajes (ejecutado en hilo separado)"""
@@ -119,10 +119,10 @@ class KafkaHandler:
                         if topic in self.callbacks:
                             self.callbacks[topic](mensaje)
                         else:
-                            print(f"⚠ Mensaje recibido de {topic} sin callback: {mensaje}")
+                            print(f"[AVISO] Mensaje recibido de {topic} sin callback: {mensaje}")
 
             except Exception as e:
-                print(f"✗ Error consumiendo mensaje: {e}")
+                print(f"[ERROR] Error consumiendo mensaje: {e}")
 
     def detener(self):
         """Detiene el consumidor y cierra conexiones"""
@@ -131,4 +131,4 @@ class KafkaHandler:
             self.producer.flush()
         if self.consumer:
             self.consumer.close()
-        print("✓ Kafka handler detenido")
+        print("[OK] Kafka handler detenido")

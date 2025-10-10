@@ -1,6 +1,11 @@
 CREATE DATABASE IF NOT EXISTS evcharging_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE evcharging_db;
 
+-- Eliminar tablas si existen (para recrearlas)
+DROP TABLE IF EXISTS suministros;
+DROP TABLE IF EXISTS charging_points;
+DROP TABLE IF EXISTS conductores;
+
 -- Tabla de Conductores (mínima - solo ID para tickets y recuperación)
 CREATE TABLE conductores (
     id VARCHAR(50) PRIMARY KEY,

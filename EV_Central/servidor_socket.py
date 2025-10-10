@@ -24,7 +24,7 @@ class ServidorSocket:
             self.server_socket.listen(10)
             self.running = True
 
-            print(f"✓ Servidor Socket escuchando en puerto {self.puerto}")
+            print(f"[OK] Servidor Socket escuchando en puerto {self.puerto}")
 
             # Hilo para aceptar conexiones
             thread = threading.Thread(target=self._aceptar_conexiones, daemon=True)
@@ -32,7 +32,7 @@ class ServidorSocket:
             return True
 
         except Exception as e:
-            print(f"✗ Error iniciando servidor socket: {e}")
+            print(f"[ERROR] Error iniciando servidor socket: {e}")
             return False
 
     def _aceptar_conexiones(self):
@@ -40,7 +40,7 @@ class ServidorSocket:
         while self.running:
             try:
                 client_socket, address = self.server_socket.accept()
-                print(f"⚡ Nueva conexión desde {address}")
+                print(f"Nueva conexion desde {address}")
 
                 # Crear hilo para manejar este cliente
                 thread = threading.Thread(
@@ -52,7 +52,7 @@ class ServidorSocket:
 
             except Exception as e:
                 if self.running:
-                    print(f"✗ Error aceptando conexión: {e}")
+                    print(f"[ERROR] Error aceptando conexion: {e}")
 
     def _manejar_cliente(self, client_socket, address):
         """Maneja la comunicación con un cliente específico"""
@@ -81,7 +81,7 @@ class ServidorSocket:
                             'mensaje': f'CP {cp_id} autenticado correctamente'
                         }
                         client_socket.send(dumps(respuesta).encode('utf-8'))
-                        print(f"✓ CP {cp_id} autenticado vía socket")
+                        print(f"[OK] CP {cp_id} autenticado via socket")
 
                         # Mantener conexión abierta para futuras comunicaciones
                         self._mantener_conexion(client_socket, cp_id)
@@ -95,7 +95,7 @@ class ServidorSocket:
                         client_socket.close()
 
         except Exception as e:
-            print(f"✗ Error manejando cliente {address}: {e}")
+            print(f"[ERROR] Error manejando cliente {address}: {e}")
             client_socket.close()
 
     def _mantener_conexion(self, client_socket, cp_id):
@@ -107,17 +107,17 @@ class ServidorSocket:
                     break
 
                 mensaje = loads(data)
-                print(f"📨 Mensaje de {cp_id}: {mensaje}")
+                print(f"Mensaje de {cp_id}: {mensaje}")
 
                 # Aquí puedes procesar otros tipos de mensajes
 
         except Exception as e:
-            print(f"✗ Conexión con {cp_id} perdida: {e}")
+            print(f"[ERROR] Conexion con {cp_id} perdida: {e}")
         finally:
             if cp_id in self.clientes_conectados:
                 del self.clientes_conectados[cp_id]
             client_socket.close()
-            print(f"⚠ {cp_id} desconectado")
+            print(f"[AVISO] {cp_id} desconectado")
 
     def enviar_a_cp(self, cp_id: str, mensaje: dict):
         """Envía un mensaje a un CP específico vía socket"""
@@ -127,10 +127,10 @@ class ServidorSocket:
                 socket_cp.send(dumps(mensaje).encode('utf-8'))
                 return True
             except Exception as e:
-                print(f"✗ Error enviando a {cp_id}: {e}")
+                print(f"[ERROR] Error enviando a {cp_id}: {e}")
                 return False
         else:
-            print(f"⚠ CP {cp_id} no está conectado")
+            print(f"[AVISO] CP {cp_id} no esta conectado")
             return False
 
     def detener(self):
@@ -140,4 +140,4 @@ class ServidorSocket:
             socket_cp.close()
         if self.server_socket:
             self.server_socket.close()
-        print("✓ Servidor socket detenido")
+        print("[OK] Servidor socket detenido")
