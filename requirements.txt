@@ -6,6 +6,3 @@ kafka-python==2.0.2
 # Base de datos
 pymysql==1.1.0
 cryptography==41.0.7
-
-# Utilidades
-python-dotenv==1.0.0

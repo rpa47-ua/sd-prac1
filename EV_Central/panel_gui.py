@@ -125,12 +125,13 @@ class PanelGUI:
         ).pack(anchor=tk.W, pady=(0, 10))
 
         # Crear Treeview
-        columns = ('ID', 'Ubicación', 'Estado', 'Precio €/kWh', 'Conductor', 'Consumo kWh', 'Importe €')
+        columns = ('ID', 'Ubicación', 'GPS', 'Estado', 'Precio €/kWh', 'Conductor', 'Consumo kWh', 'Importe €')
         self.tree = ttk.Treeview(table_frame, columns=columns, show='headings', height=15)
 
         # Configurar columnas
         self.tree.heading('ID', text='ID')
         self.tree.heading('Ubicación', text='Ubicación')
+        self.tree.heading('GPS', text='GPS (Lat, Lon)')
         self.tree.heading('Estado', text='Estado')
         self.tree.heading('Precio €/kWh', text='Precio €/kWh')
         self.tree.heading('Conductor', text='Conductor')
@@ -138,12 +139,13 @@ class PanelGUI:
         self.tree.heading('Importe €', text='Importe €')
 
         self.tree.column('ID', width=80, anchor=tk.CENTER)
-        self.tree.column('Ubicación', width=250, anchor=tk.W)
-        self.tree.column('Estado', width=150, anchor=tk.CENTER)
-        self.tree.column('Precio €/kWh', width=120, anchor=tk.CENTER)
+        self.tree.column('Ubicación', width=220, anchor=tk.W)
+        self.tree.column('GPS', width=120, anchor=tk.CENTER)
+        self.tree.column('Estado', width=140, anchor=tk.CENTER)
+        self.tree.column('Precio €/kWh', width=110, anchor=tk.CENTER)
         self.tree.column('Conductor', width=100, anchor=tk.CENTER)
-        self.tree.column('Consumo kWh', width=120, anchor=tk.CENTER)
-        self.tree.column('Importe €', width=100, anchor=tk.CENTER)
+        self.tree.column('Consumo kWh', width=110, anchor=tk.CENTER)
+        self.tree.column('Importe €', width=90, anchor=tk.CENTER)
 
         # Scrollbar
         scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.tree.yview)
@@ -254,6 +256,12 @@ class PanelGUI:
             for cp in cps:
                 cp_id = cp['id']
                 ubicacion = cp['ubicacion']
+
+                # Formato abreviado de coordenadas GPS (2 decimales)
+                latitud = cp.get('latitud', 0.0)
+                longitud = cp.get('longitud', 0.0)
+                gps_coords = f"{latitud:.2f}, {longitud:.2f}"
+
                 estado_raw = cp['estado']
                 estado = estado_raw.upper()
                 precio = f"{cp['precio_kwh']:.3f}"
@@ -273,8 +281,8 @@ class PanelGUI:
                     consumo = f"{info['consumo_actual']:.2f} kWh"
                     importe = f"{info['importe_actual']:.2f} €"
 
-                # Insertar fila con color según estado
-                item = self.tree.insert('', tk.END, values=(cp_id, ubicacion, estado, precio, conductor, consumo, importe))
+                # Insertar fila con color según estado (añadir columna GPS)
+                item = self.tree.insert('', tk.END, values=(cp_id, ubicacion, gps_coords, estado, precio, conductor, consumo, importe))
 
                 # Aplicar color (tags)
                 self.tree.item(item, tags=(estado_raw,))

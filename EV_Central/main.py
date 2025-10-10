@@ -73,9 +73,9 @@ class EVCentral:
         # 4. Crear topics de Kafka si no existen
         print("\n📋 Creando topics de Kafka...")
         all_topics = [
-            'solicitudes_suministro', 'respuestas_conductor', 'comandos_cp',
-            'telemetria_cp', 'fin_suministro', 'averias', 'recuperacion_cp',
-            'tickets', 'notificaciones'
+            'solicitudes_suministro', 'respuestas_conductor', 'respuestas_cp',
+            'comandos_cp', 'telemetria_cp', 'fin_suministro', 'averias',
+            'recuperacion_cp', 'tickets', 'notificaciones'
         ]
         self.kafka.crear_topics_si_no_existen(all_topics)
 
