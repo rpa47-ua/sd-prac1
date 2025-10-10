@@ -3,6 +3,7 @@ import json
 import time
 import socket
 import threading
+import json
 import random
 
 FORMAT = 'utf-8'
@@ -27,9 +28,9 @@ def recv(conn):
 class EVChargingPointMonitor:
     def __init__(self, engine_ip, engine_port, central_ip, central_port, cp_id):
         self.engine_ip = engine_ip
-        self.engine_port = engine_port
+        self.engine_port = int(engine_port)
         self.central_ip = central_ip
-        self.central_port = central_port
+        self.central_port = int(central_port)
         self.cp_id = cp_id
         self.last_status = None
         self.running = True
@@ -45,8 +46,14 @@ class EVChargingPointMonitor:
         try:
             self.central_client.connect(self.CENTRAL_ADDR)
             print(f"[MONITOR] Conectado a la CENTRAL {self.CENTRAL_ADDR}")
+
+            auth_msg = json.dumps({'tipo': 'AUTENTICACION', 'cp_id': self.cp_id})
+            self.central_client.send(auth_msg.encode(FORMAT))
         except ConnectionRefusedError:
             print("[ERROR] No se pudo conectar a la central.")
+            self.running = False
+        except Exception as e:
+            print(f"[ERROR] Error conectando con la central: {e}")
             self.running = False
 
     def _connect_engine(self):
@@ -56,10 +63,16 @@ class EVChargingPointMonitor:
         except ConnectionRefusedError:
             print("[ERROR] No se pudo conectar al engine.")
             self.running = False
+        except Exception as e:
+            print(f"[ERROR] Error conectando con la central: {e}")
+            self.running = False
     
     def _notify_central(self, status):
-        with self.lock:
-            send(status, self.central_client)
+        try:
+            msg = json.dumps({'tipo': 'ESTADO', 'cp_id': self.cp_id, 'estado': status})
+            self.central_client.send(msg.encode(FORMAT))
+        except Exception as e:
+            print(f"No se pudo notificar a la central {e}")
 
     def _check_engine_status(self):
         send("STATUS?", self.engine_client)

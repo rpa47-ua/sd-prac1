@@ -133,6 +133,9 @@ class EVChargingPointEngine:
             time_to_supply -= 1
             time.sleep(1) 
 
+        with self.lock:
+            self.charging = False
+
     def start(self):
         cp_init = {'cp_id': self.cp_id}
         self.producer.send('iniciar_cp', cp_init)
@@ -172,7 +175,7 @@ def main():
 
     broker = sys.argv[1]
     cp_id = sys.argv[2]
-    monitor_ip, monitor_port = sys.argv[2].split(':')
+    monitor_ip, monitor_port = sys.argv[3].split(':')
     engine = EVChargingPointEngine(broker, cp_id, monitor_ip, monitor_port)
 
     try:
