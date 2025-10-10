@@ -5,12 +5,12 @@ import threading
 from kafka import KafkaProducer, KafkaConsumer
 
 class EVDriver:
-    def __init__(self, broker, id_driver):
+    def __init__(self, broker, driver_id):
         self.broker = broker
-        self.id_driver = id_driver
+        self.driver_id = driver_id
         self.charging = False
         self.running = True # control para los threads
-        self.lock = threading.Lock()
+        self.lock = threading.Lock() # para variable compartida charging
 
         # Inicializamos kafka, productor y consumidor:
 
@@ -26,20 +26,20 @@ class EVDriver:
 
         self.consumer.subscribe(['respuestas_conductor', 'telemtria_cp', 'tickets', 'notificaciones'])
 
-        self.thread = threading.Thread(target=self._charge, daemon=True)
+        self.thread = threading.Thread(target=self._listen_kafka, daemon=True)
         self.thread.start()
         
-    def _charging_request(self, cp_id):
+    def _send_charging_request(self, cp_id):
         print(f"[SOLICITUD] en CP: {cp_id}")
 
-        request = {'conductor_id' : self.id_driver, 'cp_id' : cp_id}
+        request = {'conductor_id' : self.driver_id, 'cp_id' : cp_id}
         self.producer.send('solicitudes_suministro', request) #topic, message
 
         self._wait_authorization()
         if self.charging:
             self._wait_end()
 
-    def _charge(self):
+    def _listen_kafka(self):
         #Procesamiento de los mensajes de KAFKA
 
         try:
@@ -47,30 +47,30 @@ class EVDriver:
                 if not self.running:
                     break
 
-                response = msg.value
+                kmsg = msg.value
 
-                if msg.topic == 'respuestas_conductor' and response.get('conductor_id') == self.id_driver:
-                    if response.get('autorizado', False): # i, j --> Default
-                        print(f"[AUTORIZADO] {response.get('mensaje')}")
+                if msg.topic == 'respuestas_conductor' and kmsg.get('conductor_id') == self.driver_id:
+                    if kmsg.get('autorizado', False): # i, j --> Default
+                        print(f"[AUTORIZADO] {kmsg.get('mensaje')}")
                         with self.lock:
                             self.charging = True
                     else:
-                        print(f"[DENGADO] {response.get('mensaje')}")
+                        print(f"[DENGADO] {kmsg.get('mensaje')}")
 
-                elif msg.topic == 'telemtria_cp' and response.get('conductor_id') == self.id_driver:
+                elif msg.topic == 'telemetria_cp' and kmsg.get('conductor_id') == self.driver_id:
                     with self.lock:
-                        if self.charging and response.get('conductor_id') == self.id_driver:
-                            print(f"[TELEMETRIA] CP: {response.get('cp_id')}: {response.get('consumo_actual')} kWh | {response.get('importe_actual')} EUR")
+                        if self.charging and kmsg.get('conductor_id') == self.driver_id:
+                            print(f"[TELEMETRIA] CP: {kmsg.get('cp_id')}: {kmsg.get('consumo_actual')} kWh | {kmsg.get('importe_actual')} EUR")
                 
-                elif msg.topic == 'tickets' and response.get('conductor_id') == self.id_driver:
-                    print(f"[TICKET] CP: {response.get('cp_id')} | SUMINISTRO ID {response.get('suministro_id')}")
-                    print(f"[TICKET] CONSUMO: {response.get('consumo_kwh')} | IMPORTE TOTAL {response.get('importe_total')} EUR")
+                elif msg.topic == 'tickets' and kmsg.get('conductor_id') == self.driver_id:
+                    print(f"[TICKET] CP: {kmsg.get('cp_id')} | SUMINISTRO ID {kmsg.get('suministro_id')}")
+                    print(f"[TICKET] CONSUMO: {kmsg.get('consumo_kwh')} | IMPORTE TOTAL {kmsg.get('importe_total')} EUR")
                     with self.lock:
                         self.charging = False
 
-                elif msg.topic == 'notificaciones' and response.get('conductor_id') == self.id_driver:
-                    print(f"[NOTIFICACION] {response.get('mensaje')}")
-                    if response.get('tipo') == 'AVERIA_DURANTE_SUMINISTRO':
+                elif msg.topic == 'notificaciones' and kmsg.get('conductor_id') == self.driver_id:
+                    print(f"[NOTIFICACION] {kmsg.get('mensaje')}")
+                    if kmsg.get('tipo') == 'AVERIA_DURANTE_SUMINISTRO':
                         with self.lock:
                             self.charging = False
                 
@@ -99,7 +99,7 @@ class EVDriver:
             return
         
         for i, cp_id in enumerate(requests, 1):
-            self._charging_request(cp_id)
+            self._send_charging_request(cp_id)
 
             if i < len(requests):
                 time.sleep(4)
@@ -111,33 +111,34 @@ class EVDriver:
         self.producer.close()
 
     def start(self):
-        print(f"Conductor: {self.id_driver}")
-        print("<CP_ID> | file | salir\n")
+        print(f"Conductor: {self.driver_id}")
+        print("Solicitar suministro <CP_ID> | file | salir\n")
 
         while True:
             try: 
-                uInput = input("> ").strip()
+                u_input = input("> ").strip()
 
-                if not uInput:
+                if not u_input:
                     continue
-                if uInput.lower() == 'salir':
+                if u_input.lower() == 'salir':
                     break
-                elif uInput.lower() == 'file':
+                elif u_input.lower() == 'file':
                     self._file_process("suministros.txt")
                 
-                self._charging_request(uInput.upper())
+                self._send_charging_request(u_input.upper())
             except Exception:
                 print("[ERROR]")
 
 def main():
     if len(sys.argv) < 3:
-        print("Uso: python main.py [ip_broker:port_broker] <id_driver>")
+        print("Uso: python main.py [ip_broker:port_broker] <driver_id>")
+        print("Ejemplo: python main.py 0.0.0.0:192.168.56.88 3")
         sys.exit(1)
     
     broker = sys.argv[1]
-    id_driver = sys.argv[2]
+    driver_id = sys.argv[2]
 
-    driver = EVDriver(broker, id_driver)
+    driver = EVDriver(broker, driver_id)
     time.sleep(1) ### ???
     try:
         driver.start()
