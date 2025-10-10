@@ -13,24 +13,47 @@ class LogicaNegocio:
         # Recuperar estado tras reinicio
         self.recuperar_estado_sistema()
 
-    def autenticar_cp(self, cp_id: str, latitud: float, longitud: float) -> bool:
+    def autenticar_cp(self, cp_id: str) -> bool:
         """
-        Autentica un CP cuando se conecta
+        Autentica un CP cuando se conecta vía socket
         - Verifica si existe en BD
-        - Si no existe, lo registra con sus coordenadas GPS
+        - Si no existe, lo registra
         - Actualiza su estado a 'activado'
         """
         cp = self.db.obtener_cp(cp_id)
 
         if cp is None:
-            # CP no existe, registrarlo con coordenadas GPS
-            print(f"Registrando nuevo CP: {cp_id} en ({latitud:.6f}, {longitud:.6f})")
-            self.db.registrar_cp(cp_id, latitud, longitud)
+            # CP no existe, registrarlo
+            print(f"Registrando nuevo CP: {cp_id}")
+            self.db.registrar_cp(cp_id)
 
         # Actualizar estado a activado
         self.db.actualizar_estado_cp(cp_id, 'activado')
         print(f"[OK] CP {cp_id} autenticado y activado")
         return True
+
+    def procesar_iniciar_cp(self, mensaje: dict):
+        """
+        Procesa la inicialización de un CP cuando arranca
+        Mensaje: {'cp_id': 'CP001'}
+        """
+        cp_id = mensaje.get('cp_id')
+
+        if not cp_id:
+            print("[ERROR] Mensaje de iniciar_cp sin cp_id")
+            return
+
+        print(f"\n[INICIO] CP {cp_id} iniciando...")
+
+        # Verificar si existe en BD, si no, registrarlo
+        cp = self.db.obtener_cp(cp_id)
+        if cp is None:
+            print(f"Registrando nuevo CP: {cp_id}")
+            self.db.registrar_cp(cp_id)
+
+        # Actualizar estado a activado
+        self.db.actualizar_estado_cp(cp_id, 'activado')
+        print(f"[OK] CP {cp_id} activado")
 
     def procesar_solicitud_suministro(self, mensaje: dict):
         """

@@ -43,25 +43,25 @@ INSERT INTO conductores (id) VALUES
 ('DRV011'), ('DRV012'), ('DRV013'), ('DRV014'), ('DRV015'),
 ('DRV016'), ('DRV017'), ('DRV018'), ('DRV019'), ('DRV020');
 
--- Datos de prueba - Charging Points (con coordenadas GPS)
-INSERT INTO charging_points (id, latitud, longitud, precio_kwh, estado) VALUES
-('CP001', 38.384370, -0.512340, 0.350, 'desconectado'),
-('CP002', 38.385120, -0.511890, 0.350, 'desconectado'),
-('CP003', 38.383950, -0.513200, 0.380, 'desconectado'),
-('CP004', 38.382800, -0.510500, 0.350, 'desconectado'),
-('CP005', 38.384900, -0.512800, 0.360, 'desconectado'),
-('CP006', 38.385400, -0.513100, 0.360, 'desconectado'),
-('CP007', 38.345400, -0.481200, 0.420, 'desconectado'),
-('CP008', 38.346800, -0.482500, 0.450, 'desconectado'),
-('CP009', 38.358900, -0.490300, 0.400, 'desconectado'),
-('CP010', 38.360200, -0.491800, 0.380, 'desconectado'),
-('CP011', 38.335600, -0.485900, 0.390, 'desconectado'),
-('CP012', 38.338200, -0.487400, 0.410, 'desconectado'),
-('CP013', 38.350800, -0.465200, 0.340, 'desconectado'),
-('CP014', 38.352100, -0.467800, 0.360, 'desconectado'),
-('CP015', 38.348500, -0.505600, 0.370, 'desconectado'),
-('CP016', 38.282100, -0.558400, 0.480, 'desconectado'),
-('CP017', 38.281500, -0.559800, 0.480, 'desconectado'),
-('CP018', 38.386700, -0.433200, 0.400, 'desconectado'),
-('CP019', 38.388900, -0.430100, 0.410, 'desconectado'),
-('CP020', 38.455600, -0.543200, 0.390, 'desconectado');
+-- Datos de prueba - Charging Points
+INSERT INTO charging_points (id, estado) VALUES
+('CP001', 'desconectado'),
+('CP002', 'desconectado'),
+('CP003', 'desconectado'),
+('CP004', 'desconectado'),
+('CP005', 'desconectado'),
+('CP006', 'desconectado'),
+('CP007', 'desconectado'),
+('CP008', 'desconectado'),
+('CP009', 'desconectado'),
+('CP010', 'desconectado'),
+('CP011', 'desconectado'),
+('CP012', 'desconectado'),
+('CP013', 'desconectado'),
+('CP014', 'desconectado'),
+('CP015', 'desconectado'),
+('CP016', 'desconectado'),
+('CP017', 'desconectado'),
+('CP018', 'desconectado'),
+('CP019', 'desconectado'),
+('CP020', 'desconectado');

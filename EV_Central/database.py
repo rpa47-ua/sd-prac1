@@ -48,14 +48,17 @@ class Database:
             print(f"Error obteniendo CP: {e}")
             return None
 
-    def registrar_cp(self, cp_id: str, latitud: float, longitud: float, precio_kwh: float = 0.350):
+    def registrar_cp(self, cp_id: str):
+        """
+        Registra un nuevo Charging Point en BBDD
+        El CP envía sus propios datos (coordenadas, precio) directamente
+        """
         try:
             with self.connection.cursor() as cursor:
-                sql = """INSERT INTO charging_points (id, latitud, longitud, precio_kwh, estado)
-                         VALUES (%s, %s, %s, %s, 'desconectado')
-                         ON DUPLICATE KEY UPDATE precio_kwh = %s"""
-                cursor.execute(sql, (cp_id, latitud, longitud, precio_kwh, precio_kwh))
-                print(f"[OK] CP {cp_id} registrado en ({latitud:.6f}, {longitud:.6f})")
+                sql = """INSERT IGNORE INTO charging_points (id, estado)
+                         VALUES (%s, 'desconectado')"""
+                cursor.execute(sql, (cp_id,))
+                print(f"[OK] CP {cp_id} registrado")
                 return True
         except Exception as e:
             print(f"Error registrando CP: {e}")

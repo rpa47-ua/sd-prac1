@@ -75,19 +75,20 @@ class EVCentral:
         all_topics = [
             'solicitudes_suministro', 'respuestas_conductor', 'respuestas_cp',
             'comandos_cp', 'telemetria_cp', 'fin_suministro', 'averias',
-            'recuperacion_cp', 'tickets', 'notificaciones'
+            'recuperacion_cp', 'tickets', 'notificaciones', 'iniciar_cp'
         ]
         self.kafka.crear_topics_si_no_existen(all_topics)
 
         # 5. Configurar callbacks de Kafka
         print("\nConfigurando callbacks de Kafka...")
+        self.kafka.registrar_callback('iniciar_cp', self.logica.procesar_iniciar_cp)
         self.kafka.registrar_callback('solicitudes_suministro', self.logica.procesar_solicitud_suministro)
         self.kafka.registrar_callback('telemetria_cp', self.logica.procesar_telemetria_cp)
         self.kafka.registrar_callback('fin_suministro', self.logica.procesar_fin_suministro)
         self.kafka.registrar_callback('averias', self.logica.procesar_averia_cp)
         self.kafka.registrar_callback('recuperacion_cp', self.logica.procesar_recuperacion_cp)
 
-        topics = ['solicitudes_suministro', 'telemetria_cp', 'fin_suministro', 'averias', 'recuperacion_cp']
+        topics = ['iniciar_cp', 'solicitudes_suministro', 'telemetria_cp', 'fin_suministro', 'averias', 'recuperacion_cp']
         self.kafka.suscribirse(topics)
 
         # 6. Iniciar servidor socket

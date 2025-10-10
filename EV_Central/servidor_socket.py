@@ -67,11 +67,10 @@ class ServidorSocket:
 
             if mensaje.get('tipo') == 'AUTENTICACION':
                 cp_id = mensaje.get('cp_id')
-                ubicacion = mensaje.get('ubicacion', 'Desconocida')
 
                 # Validar autenticación (llamar callback)
                 if self.callback_autenticacion:
-                    resultado = self.callback_autenticacion(cp_id, ubicacion)
+                    resultado = self.callback_autenticacion(cp_id)
 
                     if resultado:
                         # Autenticación exitosa
