@@ -48,14 +48,14 @@ class Database:
             print(f"Error obteniendo CP: {e}")
             return None
 
-    def registrar_cp(self, cp_id: str, ubicacion: str, latitud: float = 0.0, longitud: float = 0.0, precio_kwh: float = 0.350):
+    def registrar_cp(self, cp_id: str, latitud: float, longitud: float, precio_kwh: float = 0.350):
         try:
             with self.connection.cursor() as cursor:
-                sql = """INSERT INTO charging_points (id, ubicacion, latitud, longitud, precio_kwh, estado)
-                         VALUES (%s, %s, %s, %s, %s, 'desconectado')
+                sql = """INSERT INTO charging_points (id, latitud, longitud, precio_kwh, estado)
+                         VALUES (%s, %s, %s, %s, 'desconectado')
                          ON DUPLICATE KEY UPDATE precio_kwh = %s"""
-                cursor.execute(sql, (cp_id, ubicacion, latitud, longitud, precio_kwh, precio_kwh))
-                print(f"✓ CP {cp_id} registrado en ({latitud:.2f}, {longitud:.2f})")
+                cursor.execute(sql, (cp_id, latitud, longitud, precio_kwh, precio_kwh))
+                print(f"✓ CP {cp_id} registrado en ({latitud:.6f}, {longitud:.6f})")
                 return True
         except Exception as e:
             print(f"Error registrando CP: {e}")
@@ -79,13 +79,12 @@ class Database:
             print(f"Error obteniendo conductor: {e}")
             return None
 
-    def registrar_conductor(self, conductor_id: str, nombre: str, apellidos: str, email: str = ""):
+    def registrar_conductor(self, conductor_id: str):
+        """Registra un conductor en BBDD (solo ID para recuperación de estado)"""
         try:
             with self.connection.cursor() as cursor:
-                sql = """INSERT INTO conductores (id, nombre, apellidos, email)
-                         VALUES (%s, %s, %s, %s)
-                         ON DUPLICATE KEY UPDATE nombre = %s, apellidos = %s"""
-                cursor.execute(sql, (conductor_id, nombre, apellidos, email, nombre, apellidos))
+                sql = """INSERT IGNORE INTO conductores (id) VALUES (%s)"""
+                cursor.execute(sql, (conductor_id,))
                 return True
         except Exception as e:
             print(f"Error registrando conductor: {e}")
@@ -131,3 +130,15 @@ class Database:
         except Exception as e:
             print(f"Error obteniendo suministro: {e}")
             return None
+
+    def obtener_suministros_activos(self) -> List[Dict]:
+        """Obtiene todos los suministros activos (para recuperación tras reinicio)"""
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute("""SELECT * FROM suministros
+                                 WHERE estado IN ('autorizado', 'en_curso')
+                                 ORDER BY fecha_inicio DESC""")
+                return cursor.fetchall()
+        except Exception as e:
+            print(f"Error obteniendo suministros activos: {e}")
+            return []

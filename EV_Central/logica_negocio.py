@@ -10,18 +10,22 @@ class LogicaNegocio:
         self.kafka = kafka_handler
         self.suministros_activos = {}  # {cp_id: {'conductor_id': ..., 'suministro_id': ...}}
 
-    def autenticar_cp(self, cp_id: str, ubicacion: str) -> bool:
+        # Recuperar estado tras reinicio
+        self.recuperar_estado_sistema()
+
+    def autenticar_cp(self, cp_id: str, latitud: float, longitud: float) -> bool:
         """
         Autentica un CP cuando se conecta
         - Verifica si existe en BD
+        - Si no existe, lo registra con sus coordenadas GPS
         - Actualiza su estado a 'activado'
         """
         cp = self.db.obtener_cp(cp_id)
 
         if cp is None:
-            # CP no existe, registrarlo
-            print(f"📝 Registrando nuevo CP: {cp_id}")
-            self.db.registrar_cp(cp_id, ubicacion)
+            # CP no existe, registrarlo con coordenadas GPS
+            print(f"📝 Registrando nuevo CP: {cp_id} en ({latitud:.6f}, {longitud:.6f})")
+            self.db.registrar_cp(cp_id, latitud, longitud)
 
         # Actualizar estado a activado
         self.db.actualizar_estado_cp(cp_id, 'activado')
@@ -30,39 +34,41 @@ class LogicaNegocio:
 
     def procesar_solicitud_suministro(self, mensaje: dict):
         """
-        Procesa una solicitud de suministro de un conductor
-        Mensaje esperado: {'conductor_id': 'DRV001', 'cp_id': 'CP001'}
+        Procesa una solicitud de suministro
+        Puede venir de:
+        1. Un conductor via App: {'conductor_id': 'DRV001', 'cp_id': 'CP001'}
+        2. Un CP de forma manual: {'conductor_id': 'DRV001', 'cp_id': 'CP001', 'origen': 'CP'}
         """
         conductor_id = mensaje.get('conductor_id')
         cp_id = mensaje.get('cp_id')
+        origen = mensaje.get('origen', 'CONDUCTOR')  # Por defecto asume que viene del conductor
 
-        print(f"\n📋 Procesando solicitud: Conductor {conductor_id} → CP {cp_id}")
+        print(f"\n📋 Procesando solicitud [{origen}]: Conductor {conductor_id} → CP {cp_id}")
 
-        # 1. Verificar que el conductor existe
+        # 1. Verificar que el conductor existe (si no, auto-registrar)
         conductor = self.db.obtener_conductor(conductor_id)
         if not conductor:
-            print(f"✗ Conductor {conductor_id} no existe")
-            self._enviar_respuesta_conductor(conductor_id, cp_id, False, "Conductor no registrado")
-            return
+            print(f"📝 Auto-registrando conductor {conductor_id}")
+            self.db.registrar_conductor(conductor_id)
 
         # 2. Verificar que el CP existe
         cp = self.db.obtener_cp(cp_id)
         if not cp:
             print(f"✗ CP {cp_id} no existe")
-            self._enviar_respuesta_conductor(conductor_id, cp_id, False, "CP no encontrado")
+            self._enviar_respuesta_solicitud(conductor_id, cp_id, False, "CP no encontrado", origen)
             return
 
         # 3. Verificar que el CP está disponible
         if cp['estado'] != 'activado':
             print(f"✗ CP {cp_id} no está disponible (estado: {cp['estado']})")
-            self._enviar_respuesta_conductor(conductor_id, cp_id, False, f"CP no disponible: {cp['estado']}")
+            self._enviar_respuesta_solicitud(conductor_id, cp_id, False, f"CP no disponible: {cp['estado']}", origen)
             return
 
         # 4. Todo OK - Crear suministro y autorizar
         suministro_id = self.db.crear_suministro(conductor_id, cp_id)
         self.db.actualizar_estado_cp(cp_id, 'suministrando')
 
-        # Guardar info del suministro activo
+        # Guardar info del suministro activo en memoria
         self.suministros_activos[cp_id] = {
             'conductor_id': conductor_id,
             'suministro_id': suministro_id,
@@ -72,8 +78,8 @@ class LogicaNegocio:
 
         print(f"✓ Suministro autorizado (ID: {suministro_id})")
 
-        # 5. Notificar al conductor
-        self._enviar_respuesta_conductor(conductor_id, cp_id, True, "Suministro autorizado")
+        # 5. Notificar según el origen
+        self._enviar_respuesta_solicitud(conductor_id, cp_id, True, "Suministro autorizado", origen)
 
         # 6. Notificar al CP para que inicie el suministro
         self.kafka.enviar_mensaje('comandos_cp', {
@@ -83,14 +89,28 @@ class LogicaNegocio:
             'suministro_id': suministro_id
         })
 
-    def _enviar_respuesta_conductor(self, conductor_id: str, cp_id: str, autorizado: bool, mensaje: str):
-        """Envía respuesta al conductor vía Kafka"""
-        self.kafka.enviar_mensaje('respuestas_conductor', {
-            'conductor_id': conductor_id,
-            'cp_id': cp_id,
-            'autorizado': autorizado,
-            'mensaje': mensaje
-        })
+    def _enviar_respuesta_solicitud(self, conductor_id: str, cp_id: str, autorizado: bool, mensaje: str, origen: str):
+        """
+        Envía respuesta según el origen de la solicitud
+        - Si viene del CONDUCTOR: envía a 'respuestas_conductor'
+        - Si viene del CP: envía a 'respuestas_cp' (para que el CP informe al usuario)
+        """
+        if origen == 'CP':
+            # Responder al CP para que muestre el resultado en su interfaz
+            self.kafka.enviar_mensaje('respuestas_cp', {
+                'cp_id': cp_id,
+                'conductor_id': conductor_id,
+                'autorizado': autorizado,
+                'mensaje': mensaje
+            })
+        else:
+            # Responder al conductor (aplicación móvil/driver)
+            self.kafka.enviar_mensaje('respuestas_conductor', {
+                'conductor_id': conductor_id,
+                'cp_id': cp_id,
+                'autorizado': autorizado,
+                'mensaje': mensaje
+            })
 
     def procesar_telemetria_cp(self, mensaje: dict):
         """
@@ -220,3 +240,38 @@ class LogicaNegocio:
             'cps': self.db.obtener_todos_los_cps(),
             'suministros_activos': self.suministros_activos
         }
+
+    def recuperar_estado_sistema(self):
+        """
+        Recupera el estado del sistema desde la BBDD tras un reinicio de la Central.
+        Esto es CRÍTICO para poder enviar tickets pendientes si la Central se cayó.
+        """
+        print("\n🔄 Recuperando estado del sistema desde BBDD...")
+
+        # Recuperar suministros que estaban en curso cuando se cayó el sistema
+        try:
+            suministros_pendientes = self.db.obtener_suministros_activos()
+
+            if suministros_pendientes:
+                print(f"📋 Se encontraron {len(suministros_pendientes)} suministros activos en BBDD")
+
+                for suministro in suministros_pendientes:
+                    cp_id = suministro['cp_id']
+                    conductor_id = suministro['conductor_id']
+                    suministro_id = suministro['id']
+
+                    # Restaurar en memoria
+                    self.suministros_activos[cp_id] = {
+                        'conductor_id': conductor_id,
+                        'suministro_id': suministro_id,
+                        'consumo_actual': float(suministro.get('consumo_kwh', 0.0)),
+                        'importe_actual': float(suministro.get('importe_total', 0.0))
+                    }
+
+                    print(f"  ✓ Recuperado: CP {cp_id} - Conductor {conductor_id} (ID: {suministro_id})")
+            else:
+                print("✓ No hay suministros activos pendientes")
+
+        except Exception as e:
+            print(f"⚠️ Error recuperando estado: {e}")
+            # No es crítico, el sistema puede continuar
