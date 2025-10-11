@@ -9,39 +9,41 @@ class EVDriver:
         self.broker = broker
         self.driver_id = driver_id
         self.charging = False
-        self.running = True # control para los threads
-        self.lock = threading.Lock() # para variable compartida charging
-
-        # Inicializamos kafka, productor y consumidor:
+        self.running = True
+        self.lock = threading.Lock()
 
         self.producer = KafkaProducer(
             bootstrap_servers = self.broker,
             value_serializer = lambda v: json.dumps(v).encode('utf-8')
-        ) #broker, codificacion dict --> bytes
+        )
 
         self.consumer = KafkaConsumer(
             bootstrap_servers = self.broker,
-            value_deserializer = lambda m: json.loads(m.decode('utf-8'))
-        ) #broker, decodificacion bytes --> dict
+            value_deserializer = lambda m: json.loads(m.decode('utf-8')),
+            auto_offset_reset='latest',
+            enable_auto_commit=True
+        )
 
-        self.consumer.subscribe(['respuestas_conductor', 'telemtria_cp', 'tickets', 'notificaciones'])
+        self.consumer.subscribe(['respuestas_conductor', 'telemetria_cp', 'tickets', 'notificaciones'])
 
         self.thread = threading.Thread(target=self._listen_kafka, daemon=True)
         self.thread.start()
         
     def _send_charging_request(self, cp_id):
+        with self.lock:
+            if self.charging:
+                print("[ERROR] Ya hay una carga en curso")
+                return
+            
         print(f"[SOLICITUD] en CP: {cp_id}")
-
         request = {'conductor_id' : self.driver_id, 'cp_id' : cp_id}
-        self.producer.send('solicitudes_suministro', request) #topic, message
+        self.producer.send('solicitudes_suministro', request)
+        self.producer.flush()
 
-        self._wait_authorization()
-        if self.charging:
+        if self._wait_authorization():
             self._wait_end()
 
     def _listen_kafka(self):
-        #Procesamiento de los mensajes de KAFKA
-
         try:
             for msg in self.consumer:
                 if not self.running:
@@ -50,7 +52,7 @@ class EVDriver:
                 kmsg = msg.value
 
                 if msg.topic == 'respuestas_conductor' and kmsg.get('conductor_id') == self.driver_id:
-                    if kmsg.get('autorizado', False): # i, j --> Default
+                    if kmsg.get('autorizado', False):
                         print(f"[AUTORIZADO] {kmsg.get('mensaje')}")
                         with self.lock:
                             self.charging = True
@@ -59,8 +61,8 @@ class EVDriver:
 
                 elif msg.topic == 'telemetria_cp' and kmsg.get('conductor_id') == self.driver_id:
                     with self.lock:
-                        if self.charging and kmsg.get('conductor_id') == self.driver_id:
-                            print(f"[TELEMETRIA] CP: {kmsg.get('cp_id')}: {kmsg.get('consumo_actual')} kWh | {kmsg.get('importe_actual')} EUR")
+                        if self.charging:
+                            print(f"[TELEMETRIA] CP: {kmsg.get('cp_id')}: {kmsg.get('consumo_actual', 0)} kWh | {kmsg.get('importe_actual', 0)} EUR")
                 
                 elif msg.topic == 'tickets' and kmsg.get('conductor_id') == self.driver_id:
                     print(f"[TICKET] CP: {kmsg.get('cp_id')} | SUMINISTRO ID {kmsg.get('suministro_id')}")
@@ -76,10 +78,15 @@ class EVDriver:
                 
                 ## Listas cps??
         except Exception:
-            print("[ERROR]")
+            if self.running:
+                print("[ERROR]")
                     
     def _wait_authorization(self, timeout=10): # Repasar
-        for _ in range(timeout * 2):
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            with self.lock:
+                if self.charging:
+                    return True
             time.sleep(0.5)
 
     def _wait_end(self): # Repasar
@@ -87,7 +94,6 @@ class EVDriver:
             with self.lock:
                     if not self.charging:
                         break
-
             time.sleep(1)
 
     def _file_process(self, original_file):
@@ -99,20 +105,28 @@ class EVDriver:
             return
         
         for i, cp_id in enumerate(requests, 1):
+            print(f"\n--- Solcitud {i}/{len(requests)} ---")
             self._send_charging_request(cp_id)
 
             if i < len(requests):
                 time.sleep(4)
 
     def end(self):
+        print("\n[INFO] Cerrando aplicacion...")
         self.running = False
-        time.sleep(0.5) # dar tiempo para que el hilo termine
+
+        if self.thread.is_alive():
+            self.thread.join(timeout=2)
+        
         self.consumer.close()
         self.producer.close()
 
     def start(self):
-        print(f"Conductor: {self.driver_id}")
-        print("Solicitar suministro <CP_ID> | file | salir\n")
+        print(f"=== Conductor: {self.driver_id} ===")
+        print("Comandos disponibles:")
+        print("  <CP_ID>  - Solicitar suministro en punto de carga")
+        print("  file     - Procesar solicitudes desde suministros.txt")
+        print("  salir    - Salir de la aplicación\n")
 
         while True:
             try: 
@@ -124,10 +138,15 @@ class EVDriver:
                     break
                 elif u_input.lower() == 'file':
                     self._file_process("suministros.txt")
-                
-                self._send_charging_request(u_input.upper())
-            except Exception:
-                print("[ERROR]")
+                else:
+                    self._send_charging_request(u_input.upper())
+                    
+            except EOFError:
+                break
+            except KeyboardInterrupt:
+                break
+            except Exception as e:
+                print(f"[ERROR] {e}")
 
 def main():
     if len(sys.argv) < 3:
@@ -139,7 +158,7 @@ def main():
     driver_id = sys.argv[2]
 
     driver = EVDriver(broker, driver_id)
-    time.sleep(1) ### ???
+    time.sleep(1) #Tiempo para que se conecte a Kafka
     try:
         driver.start()
     except KeyboardInterrupt:
