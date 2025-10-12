@@ -3,12 +3,9 @@ import json
 import time
 import socket
 import threading
-import json
-import random
 
 FORMAT = 'utf-8'
 HEADER = 64
-FIN = 'FIN'
 
 def send(msg, conn):
     message = msg.encode(FORMAT)
@@ -35,131 +32,106 @@ class EVChargingPointMonitor:
         self.central_ip = central_ip
         self.central_port = int(central_port)
         self.cp_id = cp_id
+
         self.last_status = None
         self.running = True
-        self.lock = threading.Lock()
-
-        self.ENGINE_ADDR = (self.engine_ip, self.engine_port)
-        self.CENTRAL_ADDR = (self.central_ip, self.central_port)
-
         self.central_client = None
         self.engine_client = None
 
-    def _connect_central(self):
-        try:
-            self.central_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.central_client.settimeout(5.0)
-            self.central_client.connect(self.CENTRAL_ADDR)
-            print(f"[MONITOR] Conectado a la CENTRAL {self.CENTRAL_ADDR}")
+        self.lock = threading.Lock()
 
-            auth_msg = json.dumps({'tipo': 'AUTENTICACION', 'cp_id': self.cp_id})
-            self.central_client.send(auth_msg.encode(FORMAT))
-            return True
-        except ConnectionRefusedError:
-            print("[ERROR] No se pudo conectar a la central (conexión rechazada)")
-            return False
-        except socket.timeout:
-            print("[ERROR] Timeout conectando a la central")
-            return False
-        except Exception as e:
-            print(f"[ERROR] Conectando con la central: {e}")
-            return False
+    def _connect_central(self):
+        while self.running:
+            try:
+                self.central_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.central_client.settimeout(5)
+                self.central_client.connect((self.central_ip, self.central_port))
+                
+                auth_msg = json.dumps({'tipo': 'AUTENTICACION', 'cp_id': self.cp_id})
+                self.central_client.send(auth_msg.encode(FORMAT))
+                
+                print(f"[MONITOR] Conectado a CENTRAL {self.central_ip}:{self.central_port}")
+                return True
+            except Exception as e:
+                print(f"[ERROR] No se pudo conectar a CENTRAL: {e}")
+                time.sleep(2)
+        return False
 
     def _connect_engine(self):
-        try:
-            self.engine_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.engine_client.settimeout(5.0)
-            self.engine_client.connect(self.ENGINE_ADDR)
-            print(f"[MONITOR] Conectado al Engine {self.ENGINE_ADDR}")
-            return True
-        except ConnectionRefusedError:
-            print("[ERROR] No se pudo conectar al engine (conexión rechazada)")
-            return False
-        except socket.timeout:
-            print("[ERROR] Timeout conectando al engine")
-            return False
-        except Exception as e:
-            print(f"[ERROR] Conectando con el engine: {e}")
-            return False
+        while self.running:
+            try:
+                self.engine_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.engine_client.settimeout(5.0)
+                self.engine_client.connect((self.engine_ip, self.engine_port))
+                
+                print(f"[MONITOR] Conectado a ENGINE {self.engine_ip}:{self.engine_port}")
+                return True
+            except Exception as e:
+                print(f"[ERROR] No se pudo conectar a ENGINE: {e}")
+        return False
     
-    def _notify_central(self, status):
+    def _notify_central(self, state):
         if not self.central_client:
+            print("[ERROR] Conexión con central no disponible")
             return
-
         try:
-            msg = json.dumps({'tipo': 'ESTADO', 'cp_id': self.cp_id, 'estado': status})
+            msg = json.dumps({'tipo': state, 'cp_id': self.cp_id})
             self.central_client.send(msg.encode(FORMAT))
-            print(f"[NOTIFICADO] Estado '{status}' enviado a la central")
-        except socket.error as e:
-            print(f"[ERROR] No se pudo notificar a la central: {e}")
-            self._reconnect_central()
+            print(f"[NOTIFICADO] Estado '{state}' enviado a CENTRAL")
         except Exception as e:
-            print(f"[ERROR] Notificando estado: {e}")
-
-    def _reconnect_central(self):
-        try:
-            if self.central_client:
-                try:
-                    self.central_client.close()
-                except:
-                    pass
-
+            print(f"[ERROR] Al notificar a CENTRAL: {e}")
             self.central_client = None
-            time.sleep(2)
             self._connect_central()
-        except Exception as e:
-            print(f"[ERROR] Reconectando: {e}")
 
     def _check_engine_status(self):
-        if not self.engine_client:
-            return
-
-        try:
-            send("STATUS?", self.engine_client)
-            init_state = recv(self.engine_client)
-            
-            if init_state:
-                with self.lock:
-                    self.last_status = init_state
-                print(f"[MONITOR] Estado inicial: {init_state}")
-                self._notify_central(init_state)
-            else:
-                print("[ERROR] No se pudo obtener estado inicial")
-                self.running = False
-                return
-        except Exception as e:
-            print(f"[ERROR] Obteniendo estado inicial: {e}")
-            self.running = False
-            return
-
         while self.running:
+            if not self.engine_client:
+                print("[INFO] Intentando reconectar al Engine...")
+                if not self._connect_engine():
+                    time.sleep(2)
+                    continue
+
+            if not self.central_client:
+                print("[INFO] Intentando reconectar a la Central...")
+                if not self._connect_central():
+                    time.sleep(2)
+                    continue
+
             try:
                 send("STATUS?", self.engine_client)
                 current_state = recv(self.engine_client)
                 
                 if not current_state:
-                    print("[ERROR] Conexión perdida con el engine")
-                    break
-
+                    print("[ERROR] No se puede establecer una conexión con el Engine")
+                    try:
+                        self.engine_client.close()
+                    except: 
+                        pass 
+                    self.engine_client = None
+                    time.sleep(2)
+                    continue
+                    
                 with self.lock:
-                    if current_state != self.last_status:
-                        print(f"[CAMBIO DE ESTADO] {self.last_status} -> {current_state}")
+                    if self.last_status != current_state:
+                        print(f"[CAMBIO DE ESTADO] {self.last_status} -> {current_state}" if self.last_status else f"[ESTADO INICIAL] {current_state}")
                         self.last_status = current_state
-
-                    self._notify_central(current_state)
-
-                    if current_state == self.last_status:
+                        self._notify_central(current_state)
+                    else:
                         print(f"[ESTADO ACTUAL] {current_state}")
-
+                    
                 time.sleep(1)
-                
-            except socket.error as e:
-                print(f"[ERROR] Comunicación con engine: {e}")
-                break
+
+            except (socket.error, ConnectionResetError):
+                print("[ERROR] Comunicación con Engine perdida. Intentando reconectar...")
+                if self.engine_client:
+                    try:
+                        self.engine_client.close()
+                    except:
+                        pass
+                self.engine_client = None
+                time.sleep(2)
             except Exception as e:
-                if self.running:
-                    print(f"[ERROR] Chequeando estado: {e}")
-                break
+                print(f"[ERROR] check estado {e}")
 
     def _cleanup(self):
         print("\n[INFO] Cerrando conexiones...")
@@ -167,24 +139,15 @@ class EVChargingPointMonitor:
 
         if self.engine_client:
             try:
-                self.engine_client.shutdown(socket.SHUT_RDWR)
                 self.engine_client.close()
-                print("[INFO] Conexión con engine cerrada")
-            except Exception:
+            except:
                 pass
-
+            
         if self.central_client:
             try:
-                # Enviar mensaje de desconexión explícita antes de cerrar
-                goodbye_msg = json.dumps({'tipo': 'DESCONEXION', 'cp_id': self.cp_id})
-                self.central_client.send(goodbye_msg.encode(FORMAT))
-                time.sleep(0.1)  # Dar tiempo a que llegue el mensaje
-                self.central_client.shutdown(socket.SHUT_RDWR)
                 self.central_client.close()
-                print("[INFO] Conexión con central cerrada")
-            except Exception:
+            except:
                 pass
-
         print("[MONITOR] Aplicación finalizada")
 
     def start(self):
