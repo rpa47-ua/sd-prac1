@@ -33,6 +33,7 @@ class EVDriver:
             self.consumer = KafkaConsumer(
                 bootstrap_servers = self.broker,
                 value_deserializer = lambda m: json.loads(m.decode('utf-8')),
+                group_id=f'driver_{self.driver_id}',
                 auto_offset_reset='latest',
                 enable_auto_commit=True
             )
@@ -67,8 +68,9 @@ class EVDriver:
         request = {'conductor_id' : self.driver_id, 'cp_id' : cp_id}
         try:
             if not self.producer:
-                print("[ERRO] Kafka no disponible")
+                print("[ERROR] Kafka no disponible")
                 self._reconnect_kafka()
+                return
 
             self.producer.send('solicitudes_suministro', request)
             self.producer.flush()
@@ -118,6 +120,8 @@ class EVDriver:
                 with self.lock:
                     self.charging = False
                     self.current_cp = None
+                    self.current_consumption = 0
+                    self.current_price = 0
 
     def _listen_kafka(self):
         while self.running:
@@ -154,7 +158,7 @@ class EVDriver:
             
             duration = int(time.time() - start_time)
             
-            if time.time() - last_data > 5:
+            if time.time() - last_data > 10:
                 print(f"\n[ERROR] Sin datos de telemetría del CP {cp}.")
                 print("[INFO] Finalizando suministro por inactividad...")
                 with self.lock:
@@ -175,7 +179,7 @@ class EVDriver:
             return
         
         for i, cp_id in enumerate(requests, 1):
-            print(f"\n--- Solcitud {i}/{len(requests)} ---")
+            print(f"\n--- Solicitud {i}/{len(requests)} ---")
             self._send_charging_request(cp_id)
 
             if i < len(requests):
@@ -197,7 +201,7 @@ class EVDriver:
             if self.consumer:
                 self.consumer.end()
             if self.producer:
-                self.producer.end()
+                self.producer.close()
         except:
             pass
 
