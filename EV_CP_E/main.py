@@ -128,7 +128,7 @@ class EVChargingPointEngine:
                 continue
 
             try: 
-                conn, addr = self.monitor_server.accept()
+                conn, addr = self.monitor.accept()
                 threading.Thread(target=self._handle_monitor, args=(conn, addr), daemon=True).start()
             except socket.timeout:
                 continue
