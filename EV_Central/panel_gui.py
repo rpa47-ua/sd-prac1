@@ -203,10 +203,19 @@ class PanelGUI:
 
         tk.Button(
             control_frame,
-            text="🔄 Actualizar",
-            bg=self.COLORS['accent'],
+            text="🛑 PARAR TODOS",
+            bg='#D32F2F',
             fg=self.COLORS['text'],
-            command=self._actualizar_manual,
+            command=self._parar_todos,
+            **btn_style
+        ).pack(side=tk.LEFT, padx=(20, 5))
+
+        tk.Button(
+            control_frame,
+            text="▶️ REANUDAR TODOS",
+            bg='#388E3C',
+            fg=self.COLORS['text'],
+            command=self._reanudar_todos,
             **btn_style
         ).pack(side=tk.LEFT, padx=5)
 
@@ -295,10 +304,6 @@ class PanelGUI:
         if self.running:
             self.root.after(2000, self._actualizar_datos)
 
-    def _actualizar_manual(self):
-        """Actualización manual (botón)"""
-        self._actualizar_datos()
-
     def _parar_cp(self):
         """Para el CP seleccionado"""
         selected = self.tree.selection()
@@ -359,6 +364,34 @@ class PanelGUI:
         # Confirmación simple
         if messagebox.askyesno("Confirmar", f"¿Reanudar CP {cp_id}?"):
             self.logica.reanudar_cp(cp_id)
+            self._actualizar_datos()
+
+    def _parar_todos(self):
+        """Para TODOS los CPs activos"""
+        estado = self.logica.obtener_estado_sistema()
+        cps_a_parar = [cp for cp in estado['cps'] if cp['estado'] in ['activado', 'suministrando']]
+
+        if not cps_a_parar:
+            messagebox.showinfo("Info", "No hay CPs activos para parar")
+            return
+
+        mensaje = f"¿Parar {len(cps_a_parar)} CP(s) activos?"
+        if messagebox.askyesno("Confirmar", mensaje):
+            self.logica.parar_todos_cps()
+            self._actualizar_datos()
+
+    def _reanudar_todos(self):
+        """Reanuda TODOS los CPs parados"""
+        estado = self.logica.obtener_estado_sistema()
+        cps_a_reanudar = [cp for cp in estado['cps'] if cp['estado'] == 'parado']
+
+        if not cps_a_reanudar:
+            messagebox.showinfo("Info", "No hay CPs parados para reanudar")
+            return
+
+        mensaje = f"¿Reanudar {len(cps_a_reanudar)} CP(s) parados?"
+        if messagebox.askyesno("Confirmar", mensaje):
+            self.logica.reanudar_todos_cps()
             self._actualizar_datos()
 
     def detener(self):

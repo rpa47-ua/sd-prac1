@@ -145,3 +145,15 @@ class Database:
         except Exception as e:
             print(f"Error obteniendo suministros activos: {e}")
             return []
+
+    def marcar_todos_cps_desconectados(self):
+        """Marca todos los CPs como desconectados (usado al arrancar Central)"""
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute("UPDATE charging_points SET estado = 'desconectado'")
+                affected = cursor.rowcount
+                print(f"[STARTUP] {affected} CPs marcados como desconectados")
+                return True
+        except Exception as e:
+            print(f"Error marcando CPs como desconectados: {e}")
+            return False

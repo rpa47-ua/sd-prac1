@@ -24,7 +24,7 @@ services:
 
   mariadb:
     image: mariadb:11.2
-    container_name: mariadb_evcharging
+    container_name: evcharging_bbdd
     restart: unless-stopped
     ports:
       - "3306:3306"

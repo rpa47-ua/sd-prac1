@@ -130,8 +130,10 @@ class EVChargingPointMonitor:
                     if current_state != self.last_status:
                         print(f"[CAMBIO DE ESTADO] {self.last_status} -> {current_state}")
                         self.last_status = current_state
-                        self._notify_central(current_state)
-                    else:
+
+                    self._notify_central(current_state)
+
+                    if current_state == self.last_status:
                         print(f"[ESTADO ACTUAL] {current_state}")
 
                 time.sleep(1)
@@ -147,21 +149,27 @@ class EVChargingPointMonitor:
     def _cleanup(self):
         print("\n[INFO] Cerrando conexiones...")
         self.running = False
-        
+
         if self.engine_client:
             try:
+                self.engine_client.shutdown(socket.SHUT_RDWR)
                 self.engine_client.close()
                 print("[INFO] Conexión con engine cerrada")
             except Exception:
                 pass
-                
+
         if self.central_client:
             try:
+                # Enviar mensaje de desconexión explícita antes de cerrar
+                goodbye_msg = json.dumps({'tipo': 'DESCONEXION', 'cp_id': self.cp_id})
+                self.central_client.send(goodbye_msg.encode(FORMAT))
+                time.sleep(0.1)  # Dar tiempo a que llegue el mensaje
+                self.central_client.shutdown(socket.SHUT_RDWR)
                 self.central_client.close()
                 print("[INFO] Conexión con central cerrada")
             except Exception:
                 pass
-        
+
         print("[MONITOR] Aplicación finalizada")
 
     def start(self):

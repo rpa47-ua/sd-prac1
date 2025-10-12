@@ -54,6 +54,10 @@ class EVCentral:
             print("[ERROR] Error critico: No se pudo conectar a la BD")
             return False
 
+        # Marcar todos los CPs como desconectados al arrancar
+        print("\nMarcando todos los CPs como desconectados...")
+        self.db.marcar_todos_cps_desconectados()
+
         # 2. Inicializar Kafka
         print("\nInicializando Kafka...")
         self.kafka = KafkaHandler(self.kafka_broker)
@@ -93,7 +97,12 @@ class EVCentral:
 
         # 6. Iniciar servidor socket
         print(f"\nIniciando servidor socket en puerto {self.puerto_socket}...")
-        self.servidor = ServidorSocket(self.puerto_socket, self.logica.autenticar_cp)
+        self.servidor = ServidorSocket(
+            self.puerto_socket,
+            self.logica.autenticar_cp,
+            self.logica.manejar_desconexion_monitor,
+            self.logica.procesar_estado_engine
+        )
 
         if not self.servidor.iniciar():
             print("[ERROR] Error critico: No se pudo iniciar servidor socket")

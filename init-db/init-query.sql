@@ -32,6 +32,3 @@ CREATE TABLE suministros (
     FOREIGN KEY (conductor_id) REFERENCES conductores(id),
     FOREIGN KEY (cp_id) REFERENCES charging_points(id)
 ) ENGINE=InnoDB;
-
--- Los CPs se registran automáticamente cuando se conectan (via topic 'iniciar_cp')
--- Los conductores se registran automáticamente cuando hacen su primera solicitud

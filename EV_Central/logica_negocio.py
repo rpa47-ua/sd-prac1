@@ -235,6 +235,87 @@ class LogicaNegocio:
         # Volver a estado activado
         self.db.actualizar_estado_cp(cp_id, 'activado')
 
+    def procesar_estado_engine(self, cp_id: str, estado_engine: str):
+        """
+        Procesa el estado del Engine reportado por el Monitor via socket.
+        Monitor_OK + Engine_OK => activado (verde)
+        Monitor_OK + Engine_KO => averiado (rojo)
+        """
+        cp = self.db.obtener_cp(cp_id)
+        if not cp:
+            return
+
+        estado_actual = cp['estado']
+
+        # Si el CP está parado manualmente, no cambiar estado
+        if estado_actual == 'parado':
+            return
+
+        if estado_engine == 'OK':
+            # Engine OK -> CP disponible
+            if estado_actual in ['averiado', 'desconectado']:
+                print(f"[ENGINE OK] CP {cp_id} -> activado")
+                self.db.actualizar_estado_cp(cp_id, 'activado')
+            # Si está suministrando, mantener ese estado
+
+        elif estado_engine in ['KO', 'AVERIA']:
+            # Engine KO -> CP averiado
+            print(f"[ENGINE KO] CP {cp_id} -> averiado")
+            self.db.actualizar_estado_cp(cp_id, 'averiado')
+
+            # Si estaba suministrando, finalizar de emergencia
+            if cp_id in self.suministros_activos:
+                info = self.suministros_activos[cp_id]
+                print(f"[EMERGENCIA] Finalizando suministro en {cp_id} por avería del Engine")
+
+                self.db.finalizar_suministro(
+                    info['suministro_id'],
+                    info['consumo_actual'],
+                    info['importe_actual']
+                )
+
+                self.kafka.enviar_mensaje('notificaciones', {
+                    'tipo': 'AVERIA_ENGINE',
+                    'conductor_id': info['conductor_id'],
+                    'cp_id': cp_id,
+                    'mensaje': f'Suministro interrumpido: Engine de CP {cp_id} averiado'
+                })
+
+                del self.suministros_activos[cp_id]
+
+    def manejar_desconexion_monitor(self, cp_id: str):
+        """
+        Llamado desde servidor_socket cuando un Monitor se desconecta.
+        Marca el CP como desconectado y finaliza suministros si los hay.
+        Monitor_KO => desconectado (gris)
+        """
+        print(f"\n[DESCONEXIÓN] Monitor de CP {cp_id} desconectado")
+
+        # Actualizar estado a desconectado
+        self.db.actualizar_estado_cp(cp_id, 'desconectado')
+
+        # Si estaba suministrando, finalizar de emergencia
+        if cp_id in self.suministros_activos:
+            info = self.suministros_activos[cp_id]
+
+            print(f"[EMERGENCIA] Finalizando suministro en {cp_id} por desconexión del Monitor")
+
+            self.db.finalizar_suministro(
+                info['suministro_id'],
+                info['consumo_actual'],
+                info['importe_actual']
+            )
+
+            # Notificar al conductor
+            self.kafka.enviar_mensaje('notificaciones', {
+                'tipo': 'CP_DESCONECTADO',
+                'conductor_id': info['conductor_id'],
+                'cp_id': cp_id,
+                'mensaje': f'Suministro interrumpido: CP {cp_id} desconectado'
+            })
+
+            del self.suministros_activos[cp_id]
+
     def parar_cp(self, cp_id: str):
         """Envia comando para parar un CP manualmente"""
         print(f"[STOP] Parando CP {cp_id}")
@@ -256,6 +337,26 @@ class LogicaNegocio:
         })
 
         self.db.actualizar_estado_cp(cp_id, 'activado')
+
+    def parar_todos_cps(self):
+        """Para TODOS los CPs que estén activos o suministrando"""
+        cps = self.db.obtener_todos_los_cps()
+
+        for cp in cps:
+            if cp['estado'] in ['activado', 'suministrando']:
+                self.parar_cp(cp['id'])
+
+        print(f"[STOP ALL] Comando de parada enviado a todos los CPs activos")
+
+    def reanudar_todos_cps(self):
+        """Reanuda TODOS los CPs que estén parados"""
+        cps = self.db.obtener_todos_los_cps()
+
+        for cp in cps:
+            if cp['estado'] == 'parado':
+                self.reanudar_cp(cp['id'])
+
+        print(f"[PLAY ALL] Comando de reanudación enviado a todos los CPs parados")
 
     def obtener_estado_sistema(self):
         """Retorna el estado actual de todos los CPs y suministros"""

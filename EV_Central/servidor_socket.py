@@ -8,12 +8,14 @@ from json import dumps, loads
 
 
 class ServidorSocket:
-    def __init__(self, puerto: int, callback_autenticacion=None):
+    def __init__(self, puerto: int, callback_autenticacion=None, callback_desconexion=None, callback_estado=None):
         self.puerto = puerto
         self.server_socket = None
         self.running = False
         self.clientes_conectados = {}  # {cp_id: socket}
         self.callback_autenticacion = callback_autenticacion
+        self.callback_desconexion = callback_desconexion  # Callback al desconectar
+        self.callback_estado = callback_estado  # Callback para estados del Engine
 
     def iniciar(self):
         """Inicia el servidor socket"""
@@ -98,25 +100,68 @@ class ServidorSocket:
             client_socket.close()
 
     def _mantener_conexion(self, client_socket, cp_id):
-        """Mantiene la conexión abierta y escucha mensajes adicionales"""
+        """
+        Mantiene la conexión socket abierta para detectar desconexiones.
+        Usa timeout para poder verificar periódicamente si el socket sigue vivo.
+        """
         try:
+            # Configurar timeout de 3 segundos para no quedarse bloqueado
+            client_socket.settimeout(3.0)
+
             while self.running:
-                data = client_socket.recv(4096).decode('utf-8')
-                if not data:
+                try:
+                    # Intentar recibir datos (con timeout)
+                    data = client_socket.recv(4096)
+
+                    if not data:
+                        # Socket cerrado por el cliente
+                        print(f"[SOCKET] CP {cp_id} cerró la conexión")
+                        break
+
+                    # Si el Monitor envía algún mensaje, procesarlo
+                    try:
+                        mensaje = loads(data.decode('utf-8'))
+
+                        # Detectar desconexión explícita
+                        if mensaje.get('tipo') == 'DESCONEXION':
+                            print(f"[SOCKET] CP {cp_id} envió desconexión explícita")
+                            break
+
+                        # Detectar mensajes de estado del Engine
+                        if mensaje.get('tipo') == 'ESTADO' and self.callback_estado:
+                            estado_engine = mensaje.get('estado')
+                            if estado_engine:
+                                self.callback_estado(cp_id, estado_engine)
+                        else:
+                            print(f"[SOCKET DEBUG] Mensaje sin procesar de {cp_id}: {mensaje}")
+                    except:
+                        pass  # Ignorar mensajes mal formados
+
+                except socket.timeout:
+                    # Timeout normal, el socket sigue vivo, continuar esperando
+                    continue
+                except socket.error as e:
+                    # Error de socket = desconexión
+                    print(f"[SOCKET] Error de conexión con {cp_id}: {e}")
                     break
 
-                mensaje = loads(data)
-                print(f"Mensaje de {cp_id}: {mensaje}")
-
-                # Aquí puedes procesar otros tipos de mensajes
-
         except Exception as e:
-            print(f"[ERROR] Conexion con {cp_id} perdida: {e}")
+            print(f"[SOCKET] Conexión con {cp_id} perdida: {e}")
         finally:
+            # Limpiar conexión
             if cp_id in self.clientes_conectados:
                 del self.clientes_conectados[cp_id]
             client_socket.close()
-            print(f"[AVISO] {cp_id} desconectado")
+
+            # NUEVO: Notificar a lógica de negocio que el Monitor se desconectó
+            if self.callback_desconexion:
+                self.callback_desconexion(cp_id)
+
+            print(f"[SOCKET] {cp_id} desconectado del servidor")
+
+    def obtener_cps_conectados(self):
+        """Retorna lista de CP IDs actualmente conectados"""
+        return list(self.clientes_conectados.keys())
 
     def enviar_a_cp(self, cp_id: str, mensaje: dict):
         """Envía un mensaje a un CP específico vía socket"""
