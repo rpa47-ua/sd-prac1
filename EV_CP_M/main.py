@@ -85,15 +85,30 @@ class EVChargingPointMonitor:
     def _notify_central(self, status):
         if not self.central_client:
             return
-        
+
         try:
             msg = json.dumps({'tipo': 'ESTADO', 'cp_id': self.cp_id, 'estado': status})
             self.central_client.send(msg.encode(FORMAT))
             print(f"[NOTIFICADO] Estado '{status}' enviado a la central")
         except socket.error as e:
             print(f"[ERROR] No se pudo notificar a la central: {e}")
+            self._reconnect_central()
         except Exception as e:
             print(f"[ERROR] Notificando estado: {e}")
+
+    def _reconnect_central(self):
+        try:
+            if self.central_client:
+                try:
+                    self.central_client.close()
+                except:
+                    pass
+
+            self.central_client = None
+            time.sleep(2)
+            self._connect_central()
+        except Exception as e:
+            print(f"[ERROR] Reconectando: {e}")
 
     def _check_engine_status(self):
         if not self.engine_client:

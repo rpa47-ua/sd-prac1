@@ -247,7 +247,7 @@ class LogicaNegocio:
 
         estado_actual = cp['estado']
 
-        # Si el CP está parado manualmente, no cambiar estado
+        # Si el CP está parado manualmente desde la GUI, ignorar todos los reportes del Engine
         if estado_actual == 'parado':
             return
 
@@ -256,7 +256,6 @@ class LogicaNegocio:
             if estado_actual in ['averiado', 'desconectado']:
                 print(f"[ENGINE OK] CP {cp_id} -> activado")
                 self.db.actualizar_estado_cp(cp_id, 'activado')
-            # Si está suministrando, mantener ese estado
 
         elif estado_engine in ['KO', 'AVERIA']:
             # Engine KO -> CP averiado

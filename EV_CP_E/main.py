@@ -36,6 +36,7 @@ class EVChargingPointEngine:
         self.monitor_port = int(monitor_port)
         self.breakdown_status = False
         self.charging = False
+        self.stopped_by_central = False
         self.running = True
         self.kWH = abs(1 - random.random()) # 0.0 ≤ x < 1.0
         self.price = abs(1 - random.random())
@@ -53,7 +54,7 @@ class EVChargingPointEngine:
             enable_auto_commit=True
         )
 
-        self.consumer.subscribe(['respuestas_cp'])
+        self.consumer.subscribe(['respuestas_cp', 'comandos_cp'])
 
         self.monitor_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.monitor_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -66,6 +67,9 @@ class EVChargingPointEngine:
         self.thread_kafka.start()
         self.thread_monitor.start()
 
+        # Dar tiempo al servidor de monitor para estar listo
+        time.sleep(0.5)
+
     def _handle_monitor(self, conn, addr):
         print(f"[MONITOR CONECTADO] {addr}")
         try:
@@ -75,7 +79,13 @@ class EVChargingPointEngine:
                 if not msg:
                     break
                 if msg == "STATUS?":
-                    status = "AVERIA" if self.breakdown_status else "OK"
+                    # MODIFICADO: Considerar también el estado parado
+                    if self.breakdown_status:
+                        status = "AVERIA"
+                    elif self.stopped_by_central:
+                        status = "PARADO"
+                    else:
+                        status = "OK"
                     send(status, conn)
         except Exception as e :
             print(f"[ERROR] monitor {addr}: {e}")
@@ -98,8 +108,11 @@ class EVChargingPointEngine:
         with self.lock:
             if self.charging:
                 print("[ERROR] CP ya está suministrando")
-                return 
-        
+                return
+            if self.stopped_by_central:
+                print("[ERROR] CP está parado por la Central (Out of Order)")
+                return
+
         print(f"[SOLICITUD] de conductor: {driver_id}")
 
         request = {'conductor_id': driver_id, 'cp_id': self.cp_id, 'origen': 'CP'}
@@ -117,24 +130,42 @@ class EVChargingPointEngine:
 
                 kmsg = msg.value
 
-                if msg.topic == 'respuestas_cp' and kmsg.get('cp_id') == self.cp_id:
+                # NUEVO: Procesar comandos de la Central
+                if msg.topic == 'comandos_cp' and kmsg.get('cp_id') == self.cp_id:
+                    comando = kmsg.get('tipo')
+
+                    if comando == 'PARAR':
+                        with self.lock:
+                            self.stopped_by_central = True
+                            # Si está suministrando, detener
+                            if self.charging:
+                                self.charging = False
+                        print("[CENTRAL] CP PARADO por orden de la Central (Out of Order)")
+
+                    elif comando == 'REANUDAR':
+                        with self.lock:
+                            self.stopped_by_central = False
+                        print("[CENTRAL] CP REANUDADO por orden de la Central")
+
+                # Procesar respuestas de autorización
+                elif msg.topic == 'respuestas_cp' and kmsg.get('cp_id') == self.cp_id:
                     if kmsg.get('autorizado', False):
                         print(f"[AUTORIZADO] {kmsg.get('mensaje')}")
                         with self.lock:
                             self.charging = True
                     else:
                         print(f"[DENEGADO] {kmsg.get('mensaje')}")
-        except Exception:
-            print("[ERROR]")
+        except Exception as e:
+            print(f"[ERROR] Kafka: {e}")
 
-    def _wait_authorization(self, timeout=10): # Repasar
+    def _wait_authorization(self, timeout=10):
         start_time = time.time()
         while time.time() - start_time < timeout:
             with self.lock:
                 if self.charging:
                     return True
             time.sleep(0.5)
-        
+
         print("[TIMEOUT] No se recibió autorización")
         return False
 
@@ -150,7 +181,11 @@ class EVChargingPointEngine:
                     self._notify_breakdown(driver_id)
                     self.charging = False
                     break
-            
+                if self.stopped_by_central:
+                    print("[PARADO] Suministro interrumpido por orden de la Central")
+                    self.charging = False
+                    break
+
             consumed_kWH += self.kWH
             acc_price += consumed_kWH * self.price * 10
             telemetry = {'cp_id': self.cp_id, 'conductor_id': driver_id, 'consumo_actual': consumed_kWH, 'importe_actual': acc_price}
@@ -162,7 +197,7 @@ class EVChargingPointEngine:
                 self._send_ticket(driver_id, consumed_kWH, acc_price)
             self.charging = False
 
-    def _send_ticket(self, driver_id, consumed_kWH, total_price): #Arreglar suministro_id
+    def _send_ticket(self, driver_id, consumed_kWH, total_price):
         ticket = {'conductor_id': driver_id, 'cp_id': self.cp_id, 'suministro_id': self.cp_id, 'consumo_kwh': consumed_kWH, 'importe_total': total_price}
         self.producer.send('tickets', ticket)
         self.producer.flush()
@@ -190,21 +225,21 @@ class EVChargingPointEngine:
             try:
                 u_input = input("> ").strip()
 
-                if not u_input: 
+                if not u_input:
                     continue
-                    
+
                 if u_input.lower() == 'salir':
                     break
                 elif u_input.upper() == 'A':
                     with self.lock:
                         self.breakdown_status = True
                     print("[AVERIA] Estado cambiado a AVERIA")
-                    
+
                 elif u_input.upper() == 'R':
                     with self.lock:
                         self.breakdown_status = False
                     print("[REPARADO] Estado cambiado a OK")
-                    
+
                 elif u_input.upper() == 'F':
                     with self.lock:
                         if self.charging:
@@ -212,7 +247,7 @@ class EVChargingPointEngine:
                             print("[FINALIZANDO] Suministro detenido manualmente")
                         else:
                             print("[ERROR] No hay ningún suministro en curso")
-                            
+
                 elif u_input.upper().startswith('S '):
                     parts = u_input.split(maxsplit=1)
                     if len(parts) > 1:
@@ -222,7 +257,7 @@ class EVChargingPointEngine:
                         print("[ERROR] Formato: S <DRIVER_ID>")
                 else:
                     print("[ERROR] Comando no reconocido")
-                    
+
             except EOFError:
                 break
             except KeyboardInterrupt:
@@ -234,12 +269,12 @@ class EVChargingPointEngine:
     def end(self):
         print("\n[INFO] Cerrando aplicación...")
         self.running = False
-        
+
         if self.thread_kafka.is_alive():
             self.thread_kafka.join(timeout=2)
         if self.thread_monitor.is_alive():
             self.thread_monitor.join(timeout=2)
-        
+
         self.consumer.close()
         self.producer.close()
         self.monitor_server.close()
