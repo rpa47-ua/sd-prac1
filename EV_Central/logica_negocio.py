@@ -5,55 +5,43 @@ Contiene las reglas y validaciones del sistema
 
 
 class LogicaNegocio:
-    def __init__(self, db, kafka_handler):
+    def __init__(self, db, kafka_handler, servidor_socket=None):
         self.db = db
         self.kafka = kafka_handler
+        self.servidor_socket = servidor_socket  # Referencia al servidor socket para enviar comandos
         self.suministros_activos = {}  # {cp_id: {'conductor_id': ..., 'suministro_id': ...}}
 
-        # Recuperar estado tras reinicio
-        self.recuperar_estado_sistema()
+        # NO recuperar suministros aquí - se recuperarán cuando los CPs se reconecten
 
     def autenticar_cp(self, cp_id: str) -> bool:
         """
-        Autentica un CP cuando se conecta vía socket
+        Autentica un CP (Monitor) cuando se conecta vía socket
         - Verifica si existe en BD
         - Si no existe, lo registra
-        - Actualiza su estado a 'activado'
+        - Recupera suministro activo si existe (para recuperación tras caída)
+        - NO actualiza el estado aún (esperará a que el Monitor reporte el estado del Engine)
         """
-        cp = self.db.obtener_cp(cp_id)
+        print(f"[AUTENTICACIÓN] CP {cp_id} conectándose...")
 
-        if cp is None:
-            # CP no existe, registrarlo
-            print(f"Registrando nuevo CP: {cp_id}")
-            self.db.registrar_cp(cp_id)
+        try:
+            cp = self.db.obtener_cp(cp_id)
 
-        # Actualizar estado a activado
-        self.db.actualizar_estado_cp(cp_id, 'activado')
-        print(f"[OK] CP {cp_id} autenticado y activado")
-        return True
+            if not cp:
+                # CP no existe, registrarlo con estado 'desconectado'
+                print(f"[REGISTRO] Nuevo CP: {cp_id}")
+                self.db.registrar_cp(cp_id)
+            else:
+                print(f"[RECONEXIÓN] CP {cp_id} reconectándose (estado: {cp.get('estado', 'desconocido')})")
 
-    def procesar_iniciar_cp(self, mensaje: dict):
-        """
-        Procesa la inicialización de un CP cuando arranca
-        Mensaje: {'cp_id': 'CP001'}
-        """
-        cp_id = mensaje.get('cp_id')
+            # NO recuperar suministros aquí - se recuperarán cuando el Engine reporte SUMINISTRANDO
+            # Esto evita mostrar suministros antiguos que ya no están activos
 
-        if not cp_id:
-            print("[ERROR] Mensaje de iniciar_cp sin cp_id")
-            return
+            print(f"[OK] Monitor de CP {cp_id} autenticado")
+            return True
 
-        print(f"\n[INICIO] CP {cp_id} iniciando...")
-
-        # Verificar si existe en BD, si no, registrarlo
-        cp = self.db.obtener_cp(cp_id)
-        if cp is None:
-            print(f"Registrando nuevo CP: {cp_id}")
-            self.db.registrar_cp(cp_id)
-
-        # Actualizar estado a activado
-        self.db.actualizar_estado_cp(cp_id, 'activado')
-        print(f"[OK] CP {cp_id} activado")
+        except Exception as e:
+            print(f"[ERROR] Error autenticando CP {cp_id}: {e}")
+            return False
 
     def procesar_solicitud_suministro(self, mensaje: dict):
         """
@@ -160,29 +148,39 @@ class LogicaNegocio:
     def procesar_fin_suministro(self, mensaje: dict):
         """
         Procesa la finalización de un suministro
-        Mensaje: {'cp_id': 'CP001', 'consumo_kwh': 10.5, 'importe': 3.68}
+        Mensaje del Engine: {'conductor_id': 'DRV001', 'cp_id': 'CP001', 'suministro_id': 123,
+                             'consumo_kwh': 10.5, 'importe_total': 3.68}
         """
         cp_id = mensaje.get('cp_id')
+        conductor_id = mensaje.get('conductor_id')
+        suministro_id = mensaje.get('suministro_id')
         consumo_kwh = mensaje.get('consumo_kwh', 0.0)
-        importe = mensaje.get('importe', 0.0)
+        importe = mensaje.get('importe_total', 0.0)  # El Engine envía 'importe_total', no 'importe'
 
         print(f"\n[FIN] Finalizando suministro en {cp_id}")
 
         if cp_id in self.suministros_activos:
-            suministro_id = self.suministros_activos[cp_id]['suministro_id']
-            conductor_id = self.suministros_activos[cp_id]['conductor_id']
+            # Usar el suministro_id que viene del Engine (más confiable)
+            info = self.suministros_activos[cp_id]
+            suministro_id_memoria = info['suministro_id']
+            conductor_id_memoria = info['conductor_id']
+
+            # Verificar consistencia (opcional, para debug)
+            if suministro_id and suministro_id != suministro_id_memoria:
+                print(f"[AVISO] Suministro ID inconsistente: Engine={suministro_id}, Memoria={suministro_id_memoria}")
+
+            # Usar el suministro_id de memoria (más confiable)
+            final_suministro_id = suministro_id_memoria
+            final_conductor_id = conductor_id_memoria
 
             # Finalizar en BD
-            self.db.finalizar_suministro(suministro_id, consumo_kwh, importe)
-
-            # Cambiar estado CP a activado
-            self.db.actualizar_estado_cp(cp_id, 'activado')
+            self.db.finalizar_suministro(final_suministro_id, consumo_kwh, importe)
 
             # Enviar ticket al conductor
             self.kafka.enviar_mensaje('tickets', {
-                'conductor_id': conductor_id,
+                'conductor_id': final_conductor_id,
                 'cp_id': cp_id,
-                'suministro_id': suministro_id,
+                'suministro_id': final_suministro_id,
                 'consumo_kwh': consumo_kwh,
                 'importe_total': importe
             })
@@ -190,7 +188,49 @@ class LogicaNegocio:
             # Eliminar de suministros activos
             del self.suministros_activos[cp_id]
 
-            print(f"[OK] Suministro finalizado. Ticket enviado a {conductor_id}")
+            print(f"[OK] Suministro finalizado. Ticket enviado a {final_conductor_id}")
+            print(f"[ESPERA] CP {cp_id} esperará 4 segundos antes de estar disponible de nuevo...")
+
+            # Iniciar hilo para esperar 4 segundos antes de activar el CP
+            import threading
+            def activar_tras_espera():
+                import time
+                time.sleep(4)
+                # Verificar que el CP no ha cambiado de estado (avería, parado, etc.)
+                cp_actual = self.db.obtener_cp(cp_id)
+                if cp_actual and cp_actual['estado'] == 'suministrando':
+                    self.db.actualizar_estado_cp(cp_id, 'activado')
+                    print(f"[OK] CP {cp_id} disponible de nuevo tras período de espera")
+
+            threading.Thread(target=activar_tras_espera, daemon=True).start()
+        else:
+            print(f"[AVISO] Fin de suministro recibido para {cp_id} pero no hay suministro activo en memoria")
+            # Intentar finalizar de todos modos si tenemos los datos
+            if suministro_id and conductor_id:
+                self.db.finalizar_suministro(suministro_id, consumo_kwh, importe)
+
+                # Enviar ticket
+                self.kafka.enviar_mensaje('tickets', {
+                    'conductor_id': conductor_id,
+                    'cp_id': cp_id,
+                    'suministro_id': suministro_id,
+                    'consumo_kwh': consumo_kwh,
+                    'importe_total': importe
+                })
+                print(f"[OK] Suministro {suministro_id} finalizado (recuperado). Ticket enviado a {conductor_id}")
+                print(f"[ESPERA] CP {cp_id} esperará 4 segundos antes de estar disponible de nuevo...")
+
+                # Iniciar hilo para esperar 4 segundos antes de activar el CP
+                import threading
+                def activar_tras_espera():
+                    import time
+                    time.sleep(4)
+                    cp_actual = self.db.obtener_cp(cp_id)
+                    if cp_actual and cp_actual['estado'] == 'suministrando':
+                        self.db.actualizar_estado_cp(cp_id, 'activado')
+                        print(f"[OK] CP {cp_id} disponible de nuevo tras período de espera")
+
+                threading.Thread(target=activar_tras_espera, daemon=True).start()
 
     def procesar_averia_cp(self, mensaje: dict):
         """
@@ -238,28 +278,67 @@ class LogicaNegocio:
     def procesar_estado_engine(self, cp_id: str, estado_engine: str):
         """
         Procesa el estado del Engine reportado por el Monitor via socket.
+        Estados posibles del Engine:
+        - 'OK' -> CP disponible (activado - verde)
+        - 'AVERIA' -> CP averiado (rojo)
+        - 'PARADO' -> CP parado manualmente desde el Engine
+
         Monitor_OK + Engine_OK => activado (verde)
-        Monitor_OK + Engine_KO => averiado (rojo)
+        Monitor_OK + Engine_AVERIA => averiado (rojo)
+        Monitor desconectado => desconectado (gris)
         """
+        print(f"[DEBUG] Recibido estado '{estado_engine}' para CP {cp_id}")
+
         cp = self.db.obtener_cp(cp_id)
         if not cp:
+            print(f"[ERROR] CP {cp_id} no encontrado en BD al procesar estado")
             return
 
         estado_actual = cp['estado']
+        print(f"[DEBUG] Estado actual del CP {cp_id} en BD: {estado_actual}")
 
         # Si el CP está parado manualmente desde la GUI, ignorar todos los reportes del Engine
         if estado_actual == 'parado':
+            print(f"[INFO] CP {cp_id} parado manualmente, ignorando estado del Engine")
             return
 
         if estado_engine == 'OK':
             # Engine OK -> CP disponible
-            if estado_actual in ['averiado', 'desconectado']:
-                print(f"[ENGINE OK] CP {cp_id} -> activado")
-                self.db.actualizar_estado_cp(cp_id, 'activado')
+            # Solo cambiar a activado si no está suministrando actualmente
+            if estado_actual != 'suministrando':
+                print(f"[ESTADO] CP {cp_id} -> activado (Engine OK)")
+                resultado = self.db.actualizar_estado_cp(cp_id, 'activado')
+                print(f"[DEBUG] Actualización BD resultado: {resultado}")
 
-        elif estado_engine in ['KO', 'AVERIA']:
-            # Engine KO -> CP averiado
-            print(f"[ENGINE KO] CP {cp_id} -> averiado")
+        elif estado_engine == 'SUMINISTRANDO':
+            # Engine reporta que está suministrando
+            if estado_actual != 'suministrando':
+                print(f"[ESTADO] CP {cp_id} -> suministrando (Engine reporta SUMINISTRANDO)")
+                self.db.actualizar_estado_cp(cp_id, 'suministrando')
+
+            # Recuperar suministro de BD si no está en memoria (recuperación tras caída de Central)
+            if cp_id not in self.suministros_activos:
+                suministro = self.db.obtener_suministro_activo(cp_id)
+                if suministro:
+                    print(f"[RECUPERACIÓN] Suministro activo encontrado para {cp_id}")
+                    self.suministros_activos[cp_id] = {
+                        'conductor_id': suministro['conductor_id'],
+                        'suministro_id': suministro['id'],
+                        'consumo_actual': float(suministro.get('consumo_kwh', 0.0)),
+                        'importe_actual': float(suministro.get('importe_total', 0.0))
+                    }
+                    print(f"  [OK] Recuperado suministro ID {suministro['id']} - Conductor {suministro['conductor_id']}")
+                else:
+                    print(f"[AVISO] Engine reporta SUMINISTRANDO pero no hay suministro activo en BD para {cp_id}")
+
+        elif estado_engine == 'PARADO':
+            # Monitor reporta que está parado manualmente
+            print(f"[ESTADO] CP {cp_id} -> parado (Monitor reporta PARADO)")
+            self.db.actualizar_estado_cp(cp_id, 'parado')
+
+        elif estado_engine == 'AVERIA':
+            # Engine AVERIA -> CP averiado
+            print(f"[AVERIA] CP {cp_id} -> averiado (Engine reporta AVERIA)")
             self.db.actualizar_estado_cp(cp_id, 'averiado')
 
             # Si estaba suministrando, finalizar de emergencia
@@ -316,26 +395,44 @@ class LogicaNegocio:
             del self.suministros_activos[cp_id]
 
     def parar_cp(self, cp_id: str):
-        """Envia comando para parar un CP manualmente"""
+        """Para un CP manualmente desde la GUI"""
         print(f"[STOP] Parando CP {cp_id}")
 
-        self.kafka.enviar_mensaje('comandos_cp', {
-            'tipo': 'PARAR',
-            'cp_id': cp_id
-        })
+        # Actualizar estado en BD
+        resultado = self.db.actualizar_estado_cp(cp_id, 'parado')
+        print(f"[DEBUG] Estado 'parado' actualizado en BD: {resultado}")
 
-        self.db.actualizar_estado_cp(cp_id, 'parado')
+        # Enviar comando PARAR al Monitor por socket
+        if self.servidor_socket:
+            comando = {'tipo': 'PARAR', 'cp_id': cp_id}
+            enviado = self.servidor_socket.enviar_a_cp(cp_id, comando)
+            if enviado:
+                print(f"[OK] Comando PARAR enviado al Monitor de {cp_id}")
+            else:
+                print(f"[ERROR] No se pudo enviar comando PARAR al Monitor de {cp_id}")
+        else:
+            print(f"[ERROR] Servidor socket no disponible para enviar comando")
 
     def reanudar_cp(self, cp_id: str):
-        """Envia comando para reanudar un CP"""
+        """Reanuda un CP que estaba parado manualmente"""
         print(f"[PLAY] Reanudando CP {cp_id}")
 
-        self.kafka.enviar_mensaje('comandos_cp', {
-            'tipo': 'REANUDAR',
-            'cp_id': cp_id
-        })
+        # Actualizar estado en BD temporalmente
+        # El Monitor enviará el estado real del Engine en el próximo ciclo
+        resultado = self.db.actualizar_estado_cp(cp_id, 'desconectado')
+        print(f"[DEBUG] Estado actualizado en BD: {resultado}")
 
-        self.db.actualizar_estado_cp(cp_id, 'activado')
+        # Enviar comando REANUDAR al Monitor por socket
+        if self.servidor_socket:
+            comando = {'tipo': 'REANUDAR', 'cp_id': cp_id}
+            enviado = self.servidor_socket.enviar_a_cp(cp_id, comando)
+            if enviado:
+                print(f"[OK] Comando REANUDAR enviado al Monitor de {cp_id}")
+                # El Monitor enviará el estado real (OK/AVERIA) en ~1 segundo
+            else:
+                print(f"[ERROR] No se pudo enviar comando REANUDAR al Monitor de {cp_id}")
+        else:
+            print(f"[ERROR] Servidor socket no disponible para enviar comando")
 
     def parar_todos_cps(self):
         """Para TODOS los CPs que estén activos o suministrando"""
@@ -364,37 +461,3 @@ class LogicaNegocio:
             'suministros_activos': self.suministros_activos
         }
 
-    def recuperar_estado_sistema(self):
-        """
-        Recupera el estado del sistema desde la BBDD tras un reinicio de la Central.
-        Esto es CRÍTICO para poder enviar tickets pendientes si la Central se cayó.
-        """
-        print("\nRecuperando estado del sistema desde BBDD...")
-
-        # Recuperar suministros que estaban en curso cuando se cayo el sistema
-        try:
-            suministros_pendientes = self.db.obtener_suministros_activos()
-
-            if suministros_pendientes:
-                print(f"Se encontraron {len(suministros_pendientes)} suministros activos en BBDD")
-
-                for suministro in suministros_pendientes:
-                    cp_id = suministro['cp_id']
-                    conductor_id = suministro['conductor_id']
-                    suministro_id = suministro['id']
-
-                    # Restaurar en memoria
-                    self.suministros_activos[cp_id] = {
-                        'conductor_id': conductor_id,
-                        'suministro_id': suministro_id,
-                        'consumo_actual': float(suministro.get('consumo_kwh', 0.0)),
-                        'importe_actual': float(suministro.get('importe_total', 0.0))
-                    }
-
-                    print(f"  [OK] Recuperado: CP {cp_id} - Conductor {conductor_id} (ID: {suministro_id})")
-            else:
-                print("[OK] No hay suministros activos pendientes")
-
-        except Exception as e:
-            print(f"[AVISO] Error recuperando estado: {e}")
-            # No es crítico, el sistema puede continuar

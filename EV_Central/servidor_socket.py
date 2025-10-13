@@ -39,10 +39,11 @@ class ServidorSocket:
 
     def _aceptar_conexiones(self):
         """Acepta conexiones entrantes en un bucle"""
+        print(f"[SERVIDOR] Esperando conexiones en puerto {self.puerto}...")
         while self.running:
             try:
                 client_socket, address = self.server_socket.accept()
-                print(f"Nueva conexion desde {address}")
+                print(f"[CONEXIÓN] Nueva conexión desde {address}")
 
                 # Crear hilo para manejar este cliente
                 thread = threading.Thread(
@@ -127,13 +128,11 @@ class ServidorSocket:
                             print(f"[SOCKET] CP {cp_id} envió desconexión explícita")
                             break
 
-                        # Detectar mensajes de estado del Engine
-                        if mensaje.get('tipo') == 'ESTADO' and self.callback_estado:
-                            estado_engine = mensaje.get('estado')
-                            if estado_engine:
-                                self.callback_estado(cp_id, estado_engine)
-                        else:
-                            print(f"[SOCKET DEBUG] Mensaje sin procesar de {cp_id}: {mensaje}")
+                        # Detectar mensajes de estado del Engine/Monitor
+                        # El Monitor envía: {'tipo': 'OK'} o {'tipo': 'AVERIA'} o {'tipo': 'SUMINISTRANDO'} o {'tipo': 'PARADO'}
+                        if mensaje.get('tipo') in ['OK', 'AVERIA', 'SUMINISTRANDO', 'PARADO'] and self.callback_estado:
+                            estado_engine = mensaje.get('tipo')
+                            self.callback_estado(cp_id, estado_engine)
                     except:
                         pass  # Ignorar mensajes mal formados
 

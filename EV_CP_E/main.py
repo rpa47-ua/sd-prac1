@@ -105,7 +105,12 @@ class EVChargingPointEngine:
                     break
                 if msg == "STATUS?":
                     with self.lock:
-                        status = "AVERIA" if self.breakdown_status else "OK"
+                        if self.breakdown_status:
+                            status = "AVERIA"
+                        elif self.charging:
+                            status = "SUMINISTRANDO"
+                        else:
+                            status = "OK"
                     try:
                         send(status, conn)
                     except Exception as e:
@@ -243,12 +248,8 @@ class EVChargingPointEngine:
         print(f"  Importe: {total_price:.2f} EUR")
 
     def start(self):
-        # Esto esta mal, no tendría que enviar nada por kafka para darse de alta unicamente
-        if self.producer:
-            cp_init = {'cp_id': self.cp_id}
-            self.producer.send('iniciar_cp', cp_init)
-            self.producer.flush()
-
+        # El Engine NO envía nada por Kafka para darse de alta
+        # El registro se hace vía Monitor -> Central por socket
         self.thread_kafka = threading.Thread(target=self._listen_kafka, daemon=True).start()
         self.thread_monitor = threading.Thread(target=self._listen_monitor, daemon=True).start()
 

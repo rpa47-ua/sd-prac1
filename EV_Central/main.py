@@ -70,45 +70,49 @@ class EVCentral:
             print("[ERROR] Error critico: No se pudo inicializar consumidor Kafka")
             return False
 
-        # 3. Inicializar lógica de negocio
-        print("\nInicializando logica de negocio...")
-        self.logica = LogicaNegocio(self.db, self.kafka)
-
-        # 4. Crear topics de Kafka si no existen
-        print("\nCreando topics de Kafka...")
-        all_topics = [
-            'solicitudes_suministro', 'respuestas_conductor', 'respuestas_cp',
-            'comandos_cp', 'telemetria_cp', 'fin_suministro', 'averias',
-            'recuperacion_cp', 'tickets', 'notificaciones', 'iniciar_cp'
-        ]
-        self.kafka.crear_topics_si_no_existen(all_topics)
-
-        # 5. Configurar callbacks de Kafka
-        print("\nConfigurando callbacks de Kafka...")
-        self.kafka.registrar_callback('iniciar_cp', self.logica.procesar_iniciar_cp)
-        self.kafka.registrar_callback('solicitudes_suministro', self.logica.procesar_solicitud_suministro)
-        self.kafka.registrar_callback('telemetria_cp', self.logica.procesar_telemetria_cp)
-        self.kafka.registrar_callback('fin_suministro', self.logica.procesar_fin_suministro)
-        self.kafka.registrar_callback('averias', self.logica.procesar_averia_cp)
-        self.kafka.registrar_callback('recuperacion_cp', self.logica.procesar_recuperacion_cp)
-
-        topics = ['iniciar_cp', 'solicitudes_suministro', 'telemetria_cp', 'fin_suministro', 'averias', 'recuperacion_cp']
-        self.kafka.suscribirse(topics)
-
-        # 6. Iniciar servidor socket
+        # 3. Iniciar servidor socket (antes de lógica de negocio)
         print(f"\nIniciando servidor socket en puerto {self.puerto_socket}...")
         self.servidor = ServidorSocket(
             self.puerto_socket,
-            self.logica.autenticar_cp,
-            self.logica.manejar_desconexion_monitor,
-            self.logica.procesar_estado_engine
+            None,  # callback_autenticacion (se configurará después)
+            None,  # callback_desconexion (se configurará después)
+            None   # callback_estado (se configurará después)
         )
 
         if not self.servidor.iniciar():
             print("[ERROR] Error critico: No se pudo iniciar servidor socket")
             return False
 
-        # 7. Iniciar panel de monitorizacion GUI
+        # 4. Inicializar lógica de negocio (con referencia al servidor socket)
+        print("\nInicializando logica de negocio...")
+        self.logica = LogicaNegocio(self.db, self.kafka, self.servidor)
+
+        # 5. Configurar callbacks del servidor socket ahora que tenemos la lógica
+        self.servidor.callback_autenticacion = self.logica.autenticar_cp
+        self.servidor.callback_desconexion = self.logica.manejar_desconexion_monitor
+        self.servidor.callback_estado = self.logica.procesar_estado_engine
+
+        # 6. Crear topics de Kafka si no existen
+        print("\nCreando topics de Kafka...")
+        all_topics = [
+            'solicitudes_suministro', 'respuestas_conductor', 'respuestas_cp',
+            'comandos_cp', 'telemetria_cp', 'fin_suministro', 'averias',
+            'recuperacion_cp', 'tickets', 'notificaciones'
+        ]
+        self.kafka.crear_topics_si_no_existen(all_topics)
+
+        # 7. Configurar callbacks de Kafka
+        print("\nConfigurando callbacks de Kafka...")
+        self.kafka.registrar_callback('solicitudes_suministro', self.logica.procesar_solicitud_suministro)
+        self.kafka.registrar_callback('telemetria_cp', self.logica.procesar_telemetria_cp)
+        self.kafka.registrar_callback('fin_suministro', self.logica.procesar_fin_suministro)
+        self.kafka.registrar_callback('averias', self.logica.procesar_averia_cp)
+        self.kafka.registrar_callback('recuperacion_cp', self.logica.procesar_recuperacion_cp)
+
+        topics = ['solicitudes_suministro', 'telemetria_cp', 'fin_suministro', 'averias', 'recuperacion_cp']
+        self.kafka.suscribirse(topics)
+
+        # 8. Iniciar panel de monitorizacion GUI
         print("\nInicializando panel de monitorizacion GUI...")
         self.panel = PanelGUI(self.logica)
 
@@ -126,6 +130,7 @@ class EVCentral:
         self.kafka.iniciar_consumidor_async()
 
         print("Sistema en funcionamiento.")
+        print("[INFO] Los Monitores se reconectarán automáticamente y enviarán sus estados actuales")
         print("Abriendo panel de monitorizacion GUI...\n")
 
         # Iniciar GUI (bloqueante - usa mainloop de Tkinter)

@@ -78,10 +78,14 @@ class KafkaHandler:
             self.consumer.subscribe(topics)
             print(f"[OK] Suscrito a topics: {', '.join(topics)}")
 
-    def enviar_mensaje(self, topic: str, mensaje: dict):
-        """Envia un mensaje a un topic de Kafka"""
+    def enviar_mensaje(self, topic: str, mensaje: dict, reintentar=True):
+        """Envia un mensaje a un topic de Kafka con reconexión automática"""
         if not self.producer:
             print("[ERROR] Productor no inicializado")
+            if reintentar:
+                print("[KAFKA] Intentando reinicializar productor...")
+                if self.inicializar_producer():
+                    return self.enviar_mensaje(topic, mensaje, reintentar=False)
             return False
 
         try:
@@ -90,6 +94,26 @@ class KafkaHandler:
             return True
         except Exception as e:
             print(f"[ERROR] Error enviando mensaje a {topic}: {e}")
+
+            # Intentar reconectar el productor
+            if reintentar:
+                print("[KAFKA] Intentando reconectar productor...")
+                import time
+                time.sleep(1)
+
+                try:
+                    if self.producer:
+                        try:
+                            self.producer.close()
+                        except:
+                            pass
+
+                    if self.inicializar_producer():
+                        print("[KAFKA] Productor reconectado, reintentando envío...")
+                        return self.enviar_mensaje(topic, mensaje, reintentar=False)
+                except Exception as reconex_error:
+                    print(f"[ERROR] Fallo reconectando productor: {reconex_error}")
+
             return False
 
     def registrar_callback(self, topic: str, callback_func):
@@ -105,10 +129,17 @@ class KafkaHandler:
 
     def _consumir_mensajes(self):
         """Bucle de consumo de mensajes (ejecutado en hilo separado)"""
+        import time
+        reconexion_intentos = 0
+        max_intentos_consecutivos = 5
+
         while self.running:
             try:
                 # Poll por mensajes (timeout de 1 segundo)
                 mensajes = self.consumer.poll(timeout_ms=1000)
+
+                # Si el poll fue exitoso, resetear contador de reconexiones
+                reconexion_intentos = 0
 
                 for topic_partition, records in mensajes.items():
                     for record in records:
@@ -122,7 +153,36 @@ class KafkaHandler:
                             print(f"[AVISO] Mensaje recibido de {topic} sin callback: {mensaje}")
 
             except Exception as e:
-                print(f"[ERROR] Error consumiendo mensaje: {e}")
+                print(f"[ERROR] Error consumiendo mensajes de Kafka: {e}")
+                reconexion_intentos += 1
+
+                # Intentar reconectar
+                if reconexion_intentos <= max_intentos_consecutivos:
+                    print(f"[KAFKA] Intento de reconexión {reconexion_intentos}/{max_intentos_consecutivos}...")
+                    time.sleep(2)
+
+                    try:
+                        # Reintentar inicializar consumer
+                        if self.consumer:
+                            try:
+                                self.consumer.close()
+                            except:
+                                pass
+
+                        self.inicializar_consumer()
+
+                        # Re-suscribirse a los topics
+                        if self.consumer and self.callbacks:
+                            topics = list(self.callbacks.keys())
+                            self.suscribirse(topics)
+                            print("[KAFKA] Reconexión exitosa!")
+                            reconexion_intentos = 0
+                    except Exception as reconex_error:
+                        print(f"[ERROR] Fallo en reconexión: {reconex_error}")
+                else:
+                    print(f"[ERROR] Máximo de intentos alcanzado. Esperando 10 segundos...")
+                    time.sleep(10)
+                    reconexion_intentos = 0  # Resetear para reintentar
 
     def detener(self):
         """Detiene el consumidor y cierra conexiones"""
