@@ -248,8 +248,6 @@ class EVChargingPointEngine:
         print(f"  Importe: {total_price:.2f} EUR")
 
     def start(self):
-        # El Engine NO envía nada por Kafka para darse de alta
-        # El registro se hace vía Monitor -> Central por socket
         self.thread_kafka = threading.Thread(target=self._listen_kafka, daemon=True).start()
         self.thread_monitor = threading.Thread(target=self._listen_monitor, daemon=True).start()
 
@@ -336,8 +334,8 @@ class EVChargingPointEngine:
 
 def main():
     if len(sys.argv) < 4:
-        print("Uso: python engine.py [ip_broker:port_broker] [ip_monitor:port_monitor] <cp_id>")
-        print("Ejemplo: python engine.py localhost:9092 localhost:5050 CP001")
+        print("Uso: python main.py [ip_broker:port_broker] [ip_monitor:port_monitor] <cp_id>")
+        print("Ejemplo: python main.py localhost:9092 localhost:5050 CP001")
         sys.exit(1)
 
     broker = sys.argv[1]

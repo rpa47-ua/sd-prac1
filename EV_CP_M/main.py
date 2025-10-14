@@ -35,7 +35,7 @@ class EVChargingPointMonitor:
 
         self.last_status = None
         self.running = True
-        self.parado_manualmente = False  # Estado de parada manual desde Central
+        self.manually_stopped = False 
         self.central_client = None
         self.engine_client = None
 
@@ -53,11 +53,8 @@ class EVChargingPointMonitor:
 
                 print(f"[MONITOR] Conectado a CENTRAL {self.central_ip}:{self.central_port}")
 
-                # Iniciar hilo para escuchar comandos de la Central
                 threading.Thread(target=self._listen_central_commands, daemon=True).start()
 
-                # Resetear last_status para forzar envío de estado en siguiente ciclo
-                # Esto asegura que la Central reciba el estado actual tras reconexión
                 with self.lock:
                     self.last_status = None
 
@@ -101,7 +98,6 @@ class EVChargingPointMonitor:
         print("[MONITOR] Escuchando comandos de la Central...")
         while self.running and self.central_client:
             try:
-                # Configurar timeout para no bloquear indefinidamente
                 self.central_client.settimeout(2.0)
                 data = self.central_client.recv(4096)
 
@@ -115,27 +111,26 @@ class EVChargingPointMonitor:
 
                     if tipo == 'PARAR':
                         with self.lock:
-                            self.parado_manualmente = True
-                            self.last_status = None  # Forzar envío de estado en siguiente ciclo
+                            self.manually_stopped = True
+                            self.last_status = None
                         print("[COMANDO] CP parado manualmente desde Central")
 
                     elif tipo == 'REANUDAR':
                         with self.lock:
-                            self.parado_manualmente = False
-                            self.last_status = None  # Forzar envío de estado en siguiente ciclo
+                            self.manually_stopped = False
+                            self.last_status = None
                         print("[COMANDO] CP reanudado desde Central")
 
                 except json.JSONDecodeError:
-                    pass  # Ignorar mensajes mal formados
+                    pass
 
             except socket.timeout:
-                continue  # Timeout normal, seguir esperando
+                continue
             except Exception as e:
                 if self.running:
                     print(f"[ERROR] Escuchando comandos de Central: {e}")
                 break
 
-        # Al salir del bucle, cerrar conexión y marcar como desconectado
         print("[MONITOR] Dejó de escuchar comandos de la Central")
         if self.central_client:
             try:
@@ -147,7 +142,6 @@ class EVChargingPointMonitor:
 
     def _check_engine_status(self):
         while self.running:
-            # Verificar conexión a Central primero
             if not self.central_client:
                 print("[RECONEXIÓN] Intentando reconectar a la Central...")
                 if not self._connect_central():
@@ -156,12 +150,10 @@ class EVChargingPointMonitor:
                 else:
                     print("[OK] Reconectado a Central, enviando estado actual...")
 
-            # Si no hay conexión al Engine, reportar AVERIA a la Central
             if not self.engine_client:
                 print("[INFO] Intentando reconectar al Engine...")
 
-                # Mientras no haya Engine, reportar AVERIA
-                if not self.parado_manualmente:
+                if not self.manually_stopped:
                     with self.lock:
                         estado_a_enviar = "AVERIA"
                         if self.last_status != estado_a_enviar:
@@ -173,7 +165,6 @@ class EVChargingPointMonitor:
                     time.sleep(2)
                     continue
                 else:
-                    # Se reconectó al Engine, resetear last_status para forzar actualización
                     print("[OK] Reconectado a Engine")
                     with self.lock:
                         self.last_status = None
@@ -190,8 +181,7 @@ class EVChargingPointMonitor:
                         pass
                     self.engine_client = None
 
-                    # Reportar AVERIA cuando el Engine no responde
-                    if not self.parado_manualmente:
+                    if not self.manually_stopped:
                         with self.lock:
                             estado_a_enviar = "AVERIA"
                             if self.last_status != estado_a_enviar:
@@ -204,14 +194,14 @@ class EVChargingPointMonitor:
 
                 with self.lock:
                     # Si está parado manualmente, enviar PARADO en vez del estado real
-                    estado_a_enviar = "PARADO" if self.parado_manualmente else current_state
+                    state = "PARADO" if self.manually_stopped else current_state
 
-                    if self.last_status != estado_a_enviar:
-                        print(f"[CAMBIO DE ESTADO] {self.last_status} -> {estado_a_enviar}" if self.last_status else f"[ESTADO INICIAL] {estado_a_enviar}")
-                        self.last_status = estado_a_enviar
-                        self._notify_central(estado_a_enviar)
+                    if self.last_status != state:
+                        print(f"[CAMBIO DE ESTADO] {self.last_status} -> {state}" if self.last_status else f"[ESTADO INICIAL] {state}")
+                        self.last_status = state
+                        self._notify_central(state)
                     else:
-                        print(f"[ESTADO ACTUAL] {estado_a_enviar}")
+                        print(f"[ESTADO ACTUAL] {state}")
 
                 time.sleep(1)
 
@@ -224,8 +214,7 @@ class EVChargingPointMonitor:
                         pass
                 self.engine_client = None
 
-                # Reportar AVERIA cuando se pierde conexión con Engine
-                if not self.parado_manualmente:
+                if not self.manually_stopped:
                     with self.lock:
                         estado_a_enviar = "AVERIA"
                         if self.last_status != estado_a_enviar:
