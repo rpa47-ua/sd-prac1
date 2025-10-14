@@ -9,7 +9,7 @@ HEADER = 64
 
 def send(msg, conn):
     message = msg.encode(FORMAT)
-    msg_length= len(message)
+    msg_length = len(message)
     send_length = str(msg_length).encode(FORMAT)
     send_length += b' ' * (HEADER - len(send_length))
     conn.send(send_length)
@@ -24,6 +24,7 @@ def recv(conn):
     except Exception:
         pass
     return None
+
 
 class EVChargingPointMonitor:
     def __init__(self, engine_ip, engine_port, central_ip, central_port, cp_id):
@@ -75,6 +76,7 @@ class EVChargingPointMonitor:
                 return True
             except Exception as e:
                 print(f"[ERROR] No se pudo conectar a ENGINE: {e}")
+                time.sleep(2)
         return False
     
     def _notify_central(self, state):
@@ -141,6 +143,8 @@ class EVChargingPointMonitor:
             print("[MONITOR] Conexión con Central cerrada, se reintentará conexión...")
 
     def _check_engine_status(self):
+        print("[MONITOR] Iniciando chequeo del estado del Engine...")
+
         while self.running:
             if not self.central_client:
                 print("[RECONEXIÓN] Intentando reconectar a la Central...")
@@ -157,7 +161,7 @@ class EVChargingPointMonitor:
                     with self.lock:
                         estado_a_enviar = "AVERIA"
                         if self.last_status != estado_a_enviar:
-                            print(f"[ENGINE CAIDO] Reportando AVERIA a Central")
+                            print("[ENGINE CAIDO] Reportando AVERIA a Central")
                             self.last_status = estado_a_enviar
                             self._notify_central(estado_a_enviar)
 
@@ -185,7 +189,7 @@ class EVChargingPointMonitor:
                         with self.lock:
                             estado_a_enviar = "AVERIA"
                             if self.last_status != estado_a_enviar:
-                                print(f"[ENGINE CAIDO] Reportando AVERIA a Central")
+                                print("[ENGINE CAIDO] Reportando AVERIA a Central")
                                 self.last_status = estado_a_enviar
                                 self._notify_central(estado_a_enviar)
 
@@ -193,7 +197,6 @@ class EVChargingPointMonitor:
                     continue
 
                 with self.lock:
-                    # Si está parado manualmente, enviar PARADO en vez del estado real
                     state = "PARADO" if self.manually_stopped else current_state
 
                     if self.last_status != state:
@@ -218,7 +221,7 @@ class EVChargingPointMonitor:
                     with self.lock:
                         estado_a_enviar = "AVERIA"
                         if self.last_status != estado_a_enviar:
-                            print(f"[ENGINE CAIDO] Reportando AVERIA a Central")
+                            print("[ENGINE CAIDO] Reportando AVERIA a Central")
                             self.last_status = estado_a_enviar
                             self._notify_central(estado_a_enviar)
 
@@ -270,10 +273,11 @@ class EVChargingPointMonitor:
         finally:
             self._cleanup()
 
+
 def main():
     if len(sys.argv) < 4:
         print("Uso: python main.py [ip_engine:port_engine] [ip_central:port_central] <cp_id>") 
-        print("Ejemplo: python main.py localhost:5050 localhost:3306 CP001")
+        print("Ejemplo: python main.py localhost:5050 localhost:5000 CP001")
         sys.exit(1)
 
     engine_ip, engine_port = sys.argv[1].split(':')
@@ -282,6 +286,7 @@ def main():
 
     monitor = EVChargingPointMonitor(engine_ip, engine_port, central_ip, central_port, cp_id)
     monitor.start()
+
 
 if __name__ == "__main__":
     main()

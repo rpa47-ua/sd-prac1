@@ -26,13 +26,13 @@ class EVDriver:
     def _init_kafka(self):
         try:
             self.producer = KafkaProducer(
-                bootstrap_servers = self.broker,
-                value_serializer = lambda v: json.dumps(v).encode('utf-8')
+                bootstrap_servers=self.broker,
+                value_serializer=lambda v: json.dumps(v).encode('utf-8')
             )
             
             self.consumer = KafkaConsumer(
-                bootstrap_servers = self.broker,
-                value_deserializer = lambda m: json.loads(m.decode('utf-8')),
+                bootstrap_servers=self.broker,
+                value_deserializer=lambda m: json.loads(m.decode('utf-8')),
                 group_id=f'driver_{self.driver_id}',
                 auto_offset_reset='latest',
                 enable_auto_commit=True
@@ -40,55 +40,64 @@ class EVDriver:
 
             self.consumer.subscribe(['respuestas_conductor', 'telemetria_cp', 'tickets', 'notificaciones', 'fin_suministro'])
 
-            print(f"[OK] Conectado a kafka {self.broker}")
-        except Exception as e:
-            print(f"[ERROR] Fallo iniciando a Kafka: {e}")
+            print(f"\n[OK] Conectado a Kafka en {self.broker}\n")
+        except Exception:
+            print("\n[ERROR] No se pudo iniciar la conexión con Kafka. Verifique el broker y vuelva a intentarlo.\n")
             self.producer = None
             self.consumer = None
 
     def _reconnect_kafka(self):
         while self.running:
-            print("[INFO] Reintentando conexión a Kafka")
+            print("\n[INFO] Reintentando conexión con Kafka...\n")
             try:
                 self._init_kafka()
                 if self.producer and self.consumer:
-                    print("[OK] Reconexión Kafa completada")
+                    print("[OK] Reconexión con Kafka completada\n")
                     return
             except:
-                print(f"[ERROR] Reconexion Kafka fallida")
+                print("[ERROR] No se pudo reconectar con Kafka. Se volverá a intentar...\n")
             time.sleep(5)
         
     def _send_charging_request(self, cp_id):
         with self.lock:
             if self.charging:
-                print("[ERROR] Ya hay una carga en curso")
+                print("\n[ERROR] Ya existe una carga en curso. Espere a que finalice antes de iniciar otra.\n")
                 return
             
-        print(f"[SOLICITUD] en CP: {cp_id}")
-        request = {'conductor_id' : self.driver_id, 'cp_id' : cp_id}
+        print(f"\n[SOLICITUD] Enviando solicitud de carga al punto de carga: {cp_id}\n")
+        
+        request = {
+            'conductor_id': self.driver_id, 
+            'cp_id': cp_id
+        }
+
         try:
             if not self.producer:
-                print("[ERROR] Kafka no disponible")
+                print("\n[ERROR] Kafka no está disponible. Intentando reconexión...\n")
                 self._reconnect_kafka()
                 return
 
             self.producer.send('solicitudes_suministro', request)
             self.producer.flush()
-        except Exception as e:
-            print(f"[ERROR] Enviar solicitud {e}")
+            print("[OK] Solicitud enviada correctamente.\n")
+        except Exception:
+            print("\n[ERROR] No se pudo enviar la solicitud al broker Kafka.\n")
             self._reconnect_kafka()
 
     def _process_message(self, topic, kmsg):
         if topic == 'respuestas_conductor' and kmsg.get('conductor_id') == self.driver_id:
             if kmsg.get('autorizado', False):
-                print(f"\n[AUTORIZADO] {kmsg.get('mensaje', 'Suministro autorizado')}")
+                print(f"\n[AUTORIZADO] {kmsg.get('mensaje', 'Suministro autorizado')}\n")
                 with self.lock:
+                    if self.charging: # Por si cae central para no volve a _display_stats
+                        return 
+                    
                     self.charging = True
                     self.current_cp = kmsg.get('cp_id')
                     self.last_telemetry_time = time.time()
                 threading.Thread(target=self._display_stats, daemon=True).start()
             else:
-                print(f"\n[DENEGADO] {kmsg.get('mensaje', 'Suministro denegado')}")
+                print(f"\n[DENEGADO] {kmsg.get('mensaje', 'Suministro denegado')}\n")
 
         elif topic == 'telemetria_cp' and kmsg.get('conductor_id') == self.driver_id:
             with self.lock:
@@ -98,11 +107,11 @@ class EVDriver:
                     self.last_telemetry_time = time.time()
 
         elif topic == 'tickets' and kmsg.get('conductor_id') == self.driver_id:
-            print(f"\n[TICKET FINAL]")
-            print(f"  CP: {kmsg.get('cp_id')}")
-            print(f"  Suministro ID: {kmsg.get('suministro_id')}")
-            print(f"  Consumo: {kmsg.get('consumo_kwh', 0):.2f} kWh")
-            print(f"  Importe: {kmsg.get('importe_total', 0):.2f} EUR")
+            print(f"\n[TICKET FINAL]\n"
+                  f"  CP: {kmsg.get('cp_id')}\n"
+                  f"  Suministro ID: {kmsg.get('suministro_id')}\n"
+                  f"  Consumo: {kmsg.get('consumo_kwh', 0):.2f} kWh\n"
+                  f"  Importe: {kmsg.get('importe_total', 0):.2f} EUR\n")
             with self.lock:
                 self.charging = False
                 self.current_cp = None
@@ -110,12 +119,12 @@ class EVDriver:
                 self.current_price = 0
 
         elif topic == 'fin_suministro' and kmsg.get('conductor_id') == self.driver_id:
-            print(f"\n[FIN SUMINISTRO] CP: {kmsg.get('cp_id')}")
+            print(f"\n[FIN SUMINISTRO] Finalizado en CP: {kmsg.get('cp_id')}\n")
             with self.lock:
                 self.charging = False
 
         elif topic == 'notificaciones' and kmsg.get('conductor_id') == self.driver_id:
-            print(f"\n[NOTIFICACION] {kmsg.get('mensaje')}")
+            print(f"\n[NOTIFICACIÓN] {kmsg.get('mensaje')}\n")
             if kmsg.get('tipo') == 'AVERIA_DURANTE_SUMINISTRO':
                 with self.lock:
                     self.charging = False
@@ -136,15 +145,14 @@ class EVDriver:
                     for msg in msgs:
                         self._process_message(msg.topic, msg.value)
                     
-            except Exception as e:
+            except Exception:
                 if self.running:
-                    print(f"[ERROR] Error al escuchar a Kafka: {e}")
+                    print("\n[ERROR] Se produjo un problema al escuchar los mensajes de Kafka.\n")
                     time.sleep(2)
                     self._reconnect_kafka()
 
     def _display_stats(self):
-        print(f"[SUMINISTRO EN CURSO]")
-        
+        print("\n[SUMINISTRO EN CURSO]\n")
         start_time = time.time()
         
         while True:
@@ -159,13 +167,14 @@ class EVDriver:
             duration = int(time.time() - start_time)
             
             if time.time() - last_data > 10:
-                print(f"\n[ERROR] Sin datos de telemetría del CP {cp}.")
-                print("[INFO] Finalizando suministro por inactividad...")
+                print(f"\n[ERROR] No se reciben datos de telemetría del CP {cp}.\n"
+                      f"[INFO] Finalizando suministro por inactividad...\n")
                 with self.lock:
                     self.charging = False
                 break
 
-            print(f"\r  CP: {cp} | Tiempo: {duration}s | Consumo: {consumption:.2f} kWh | Importe: {price:.2f} EUR  ", end='', flush=True)
+            print(f"\r  CP: {cp} | Tiempo: {duration}s | Consumo: {consumption:.2f} kWh | Importe: {price:.2f} EUR  ", 
+                  end='', flush=True)
             time.sleep(1)
         
         print("\n")
@@ -175,18 +184,18 @@ class EVDriver:
             with open(original_file, 'r') as file:
                 requests = [line.strip() for line in file if line.strip()]
         except FileNotFoundError:
-            print(f"[ERROR] Archivo {original_file} no encontrado")
+            print(f"\n[ERROR] No se encontró el archivo {original_file}. Verifique el nombre o la ruta.\n")
             return
         
         for i, cp_id in enumerate(requests, 1):
-            print(f"\n--- Solicitud {i}/{len(requests)} ---")
+            print(f"\n--- Procesando solicitud {i}/{len(requests)} ---\n")
             self._send_charging_request(cp_id)
 
             if i < len(requests):
                 time.sleep(4)
 
     def end(self):
-        print("\n[INFO] Cerrando aplicación...")
+        print("\n[INFO] Cerrando aplicación...\n")
         self.running = False
         
         try:
@@ -206,11 +215,11 @@ class EVDriver:
             pass
 
     def start(self):
-        print(f"=== Conductor: {self.driver_id} ===")
-        print("Comandos disponibles:")
-        print("  <CP_ID>  - Solicitar suministro en punto de carga")
-        print("  file     - Procesar solicitudes desde suministros.txt")
-        print("  salir    - Salir de la aplicación\n")
+        print(f"=== Conductor: {self.driver_id} ===\n")
+        print("Comandos disponibles:\n"
+              "  <CP_ID>  - Solicitar suministro en punto de carga\n"
+              "  file     - Procesar solicitudes desde suministros.txt\n"
+              "  salir    - Salir de la aplicación\n")
 
         while True:
             try: 
@@ -227,15 +236,15 @@ class EVDriver:
                     
             except (EOFError, KeyboardInterrupt):
                 break
-            except Exception as e:
-                print(f"[ERROR] {e}")
+            except Exception:
+                print("\n[ERROR] Se produjo un error inesperado al procesar el comando.\n")
         
         self.end()
 
 def main():
     if len(sys.argv) < 3:
-        print("Uso: python main.py [ip_broker:port_broker] <driver_id>")
-        print("Ejemplo: python main.py localhost:9092 DRV001")
+        print("\nUso: python main.py [ip_broker:port_broker] <driver_id>\n"
+              "Ejemplo: python main.py localhost:9092 DRV001\n")
         sys.exit(1)
 
     broker = sys.argv[1]

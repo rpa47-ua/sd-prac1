@@ -90,7 +90,8 @@ class LogicaNegocio:
         print(f"[OK] Suministro autorizado (ID: {suministro_id})")
 
         # 5. Notificar según el origen
-        self._enviar_respuesta_solicitud(conductor_id, cp_id, True, "Suministro autorizado", origen)
+        # Para Izan, añadi que tambien mande el id del suministro
+        self._enviar_respuesta_solicitud(conductor_id, cp_id, True, "Suministro autorizado", origen, suministro_id)
 
         # 6. Notificar al CP para que inicie el suministro
         self.kafka.enviar_mensaje('comandos_cp', {
@@ -99,8 +100,8 @@ class LogicaNegocio:
             'conductor_id': conductor_id,
             'suministro_id': suministro_id
         })
-
-    def _enviar_respuesta_solicitud(self, conductor_id: str, cp_id: str, autorizado: bool, mensaje: str, origen: str):
+                                                                                                                      #cambio
+    def _enviar_respuesta_solicitud(self, conductor_id: str, cp_id: str, autorizado: bool, mensaje: str, origen: str, suministro_id: int):
         """
         Envía respuesta según el origen de la solicitud
         - Si viene del CONDUCTOR: envía a 'respuestas_conductor'
@@ -112,7 +113,8 @@ class LogicaNegocio:
                 'cp_id': cp_id,
                 'conductor_id': conductor_id,
                 'autorizado': autorizado,
-                'mensaje': mensaje
+                'mensaje': mensaje,
+                'suministro_id': suministro_id # Añadido
             })
         else:
             # Responder al conductor (aplicación móvil/driver)
@@ -120,7 +122,8 @@ class LogicaNegocio:
                 'conductor_id': conductor_id,
                 'cp_id': cp_id,
                 'autorizado': autorizado,
-                'mensaje': mensaje
+                'mensaje': mensaje,
+                'suministro_id': suministro_id # Añadido
             })
 
     def procesar_telemetria_cp(self, mensaje: dict):

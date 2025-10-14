@@ -28,13 +28,11 @@ def recv(conn):
     return None
 
 class EVChargingPointEngine:
-    def __init__(self, broker, cp_id, monitor_ip, monitor_port, gui_mode=False):
+    def __init__(self, broker, cp_id, monitor_ip, monitor_port):
         self.broker = broker
         self.cp_id = cp_id
         self.monitor_ip = monitor_ip
         self.monitor_port = int(monitor_port)
-        self.gui_mode = gui_mode
-        self.gui = None
 
         self.breakdown_status = False
         self.charging = False
@@ -68,22 +66,22 @@ class EVChargingPointEngine:
             )
 
             self.consumer.subscribe(['respuestas_cp', 'respuestas_conductor'])
-            self._log("\n[OK] Conectado a Kafka en {}\n".format(self.broker))
+            print(f"\n[OK] Conectado a Kafka en {self.broker}\n")
         except Exception:
-            self._log("\n[ERROR] No se pudo conectar a Kafka. Verifique el broker o la red.\n")
+            print("\n[ERROR] No se pudo conectar a Kafka. Verifique el broker o la red.\n")
             self.producer = None
             self.consumer = None
 
     def _reconnect_kafka(self):
         while self.running:
-            self._log("\n[INFO] Reintentando conexión a Kafka...\n")
+            print("\n[INFO] Reintentando conexión a Kafka...\n")
             try:
                 self._init_kafka()
                 if self.producer and self.consumer:
-                    self._log("[OK] Reconexión a Kafka completada.\n")
+                    print("[OK] Reconexión a Kafka completada.\n")
                     return
             except:
-                self._log("[ERROR] Reconexión a Kafka fallida.\n")
+                print("[ERROR] Reconexión a Kafka fallida.\n")
             time.sleep(5)
 
     def _init_monitor(self):
@@ -93,13 +91,13 @@ class EVChargingPointEngine:
             self.monitor.bind((self.monitor_ip, self.monitor_port))
             self.monitor.listen(5)
             self.monitor.settimeout(1)
-            self._log("[MONITOR] Activo en {}:{}\n".format(self.monitor_ip, self.monitor_port))
+            print(f"[MONITOR] Activo en {self.monitor_ip}:{self.monitor_port}\n")
         except Exception:
-            self._log("\n[ERROR] No se pudo iniciar el servidor del monitor.\n")
+            print("\n[ERROR] No se pudo iniciar el servidor del monitor.\n")
             self.monitor = None
 
     def _handle_monitor(self, conn, addr):
-        self._log("[MONITOR CONECTADO] {}\n".format(addr))
+        print(f"[MONITOR CONECTADO] {addr}\n")
         try:
             while self.running:
                 msg = recv(conn)
@@ -116,20 +114,20 @@ class EVChargingPointEngine:
                     try:
                         send(status, conn)
                     except Exception:
-                        self._log("[ERROR] No se pudo enviar el estado al monitor.\n")
+                        print("[ERROR] No se pudo enviar el estado al monitor.\n")
         except Exception:
-            self._log("[ERROR] Problema con el monitor {}.\n".format(addr))
+            print(f"[ERROR] Problema con el monitor {addr}.\n")
         finally:
             try:
                 conn.close()
             except:
                 pass
-            self._log("[MONITOR DESCONECTADO] {}\n".format(addr))
+            print(f"[MONITOR DESCONECTADO] {addr}\n")
 
     def _listen_monitor(self):
         while self.running:
             if not self.monitor:
-                self._log("[ERROR] Monitor no disponible. Intentando reiniciar...\n")
+                print("[ERROR] Monitor no disponible. Intentando reiniciar...\n")
                 self._init_monitor()
                 time.sleep(2)
                 continue
@@ -141,7 +139,7 @@ class EVChargingPointEngine:
                 continue
             except Exception:
                 if self.running:
-                    self._log("[ERROR] Fallo en el monitor.\n")
+                    print("[ERROR] Fallo en el monitor.\n")
                     time.sleep(1)
 
     def _listen_kafka(self):
@@ -163,15 +161,12 @@ class EVChargingPointEngine:
                             self._handle_authorization_response(kmsg)
 
             except Exception:
-                self._log("[ERROR] Fallo al escuchar mensajes de Kafka.\n")
+                print("[ERROR] Fallo al escuchar mensajes de Kafka.\n")
                 self._reconnect_kafka()
                 time.sleep(2)
 
     def _display_stats(self):
-        if self.gui_mode:
-            return  # En modo GUI, las stats se muestran en la interfaz
-            
-        self._log("\n[SUMINISTRO EN CURSO]\n")
+        print("\n[SUMINISTRO EN CURSO]\n")
         start_time = time.time()
 
         consumed_kwh = 0
@@ -195,49 +190,20 @@ class EVChargingPointEngine:
 
         print("\n")
 
-    def _display_stats_gui(self):
-        if not self.gui_mode or not self.gui:
-            return
-            
-        start_time = time.time()
-        consumed_kwh = 0
-        total_price = 0
-
-        while True:
-            with self.lock:
-                if not self.charging:
-                    break
-                consumed_kwh += self.kWH
-                total_price = consumed_kwh * self.price
-
-            duration = int(time.time() - start_time)
-            
-            if self.gui and hasattr(self.gui, '_update_metrics'):
-                try:
-                    self.gui.root.after(0, lambda: self.gui._update_metrics(consumed_kwh, total_price, duration))
-                except:
-                    pass
-                    
-            time.sleep(1)
-
     def _handle_authorization_response(self, kmsg):
         if kmsg.get('autorizado', False):
-            self._log("\n[AUTORIZADO] {}\n".format(kmsg.get('mensaje', 'Suministro autorizado.')))
+            print(f"\n[AUTORIZADO] {kmsg.get('mensaje', 'Suministro autorizado.')}\n")
             with self.lock:
-                if self.charging:
+                if self.charging: # Por si se cae la central durante un suministro activo ya que si no --> _supply --> _reconnect_kafka --> corta suministro actual
                     return 
                 
                 self.charging = True
                 self.current_driver = kmsg.get('conductor_id')
                 self.current_supply_id = kmsg.get('suministro_id')
                 threading.Thread(target=self._supply, daemon=True).start()
-                
-                if self.gui_mode:
-                    threading.Thread(target=self._display_stats_gui, daemon=True).start()
-                else:
-                    threading.Thread(target=self._display_stats, daemon=True).start()
+                threading.Thread(target=self._display_stats, daemon=True).start()
         else:
-            self._log("\n[DENEGADO] {}\n".format(kmsg.get('mensaje', 'Suministro denegado.')))
+            print(f"\n[DENEGADO] {kmsg.get('mensaje', 'Suministro denegado.')}\n")
 
     def _notify_breakdown(self, driver_id):
         try:
@@ -249,9 +215,9 @@ class EVChargingPointEngine:
             }
             self.producer.send('notificaciones', msg)
             self.producer.flush()
-            self._log("[AVERIA] Avería comunicada a la central/conductor.\n")
+            print("[AVERIA] Avería comunicada a la central/conductor.\n")
         except Exception:
-            self._log("[ERROR] No se pudo notificar la avería a Kafka.\n")
+            print("[ERROR] No se pudo notificar la avería a Kafka.\n")
             self._reconnect_kafka()
 
     def _supply(self):
@@ -259,8 +225,7 @@ class EVChargingPointEngine:
             driver_id = self.current_driver
             supply_id = self.current_supply_id
 
-        self._log("\n[SUMINISTRO INICIADO]\n  Conductor: {}\n  ID: {}\n  Precio: {:.2f} EUR/kWh\n".format(
-            driver_id, supply_id, self.price))
+        print(f"\n[SUMINISTRO INICIADO]\n  Conductor: {driver_id}\n  ID: {supply_id}\n  Precio: {self.price:.2f} EUR/kWh\n")
         
         consumed_kwh = 0
         total_price = 0
@@ -271,7 +236,7 @@ class EVChargingPointEngine:
                 if not self.charging or not self.running:
                     break
                 if self.breakdown_status:
-                    self._log("\n[AVERIA] Suministro interrumpido por avería.\n")
+                    print("\n[AVERIA] Suministro interrumpido por avería.\n")
                     self._notify_breakdown(driver_id)
                     self.charging = False
                     break
@@ -309,9 +274,9 @@ class EVChargingPointEngine:
             try:
                 self.producer.send('fin_suministro', end_msg)
                 self.producer.flush()
-                self._log("\n[FIN] Notificación de fin de suministro enviada a la central.\n")
+                print("\n[FIN] Notificación de fin de suministro enviada a la central.\n")
             except Exception:
-                self._log("\n[ERROR] No se pudo notificar el fin del suministro a Kafka.\n")
+                print("\n[ERROR] No se pudo notificar el fin del suministro a Kafka.\n")
                 self._reconnect_kafka()
 
         with self.lock:
@@ -319,90 +284,27 @@ class EVChargingPointEngine:
             self.current_driver = None
             self.current_supply_id = None
 
-        self._log("[SUMINISTRO FINALIZADO]\n  Consumo total: {:.2f} kWh\n  Importe total: {:.2f} EUR\n".format(
-            consumed_kwh, total_price))
-
-    def _log(self, message, force_print=False):
-        """Helper para logging que funciona tanto en GUI como en CLI"""
-        # En modo GUI: imprimir en terminal solo mensajes importantes del sistema
-        # y siempre lo que viene del CLI
-        if self.gui_mode:
-            # Siempre imprimir: OK Kafka, ERROR, MONITOR, y mensajes del CLI
-            important_keywords = ['[OK]', '[ERROR]', '[MONITOR]', '[INFO]', 
-                                  '[AVERIA]', '[REPARADO]', '[SOLICITUD]', '[FINALIZANDO]']
-            should_print = force_print or any(kw in message for kw in important_keywords)
-            
-            if should_print:
-                print(message, end='')
-            
-            # Enviar a GUI
-            if self.gui and hasattr(self.gui, 'log_message'):
-                clean_msg = message.replace('\n', ' ').strip()
-                if clean_msg:
-                    try:
-                        self.gui.root.after(0, lambda msg=clean_msg: self.gui.log_message(msg))
-                    except:
-                        pass
-        else:
-            # Modo CLI puro: imprimir todo
-            print(message, end='')
+        print(f"[SUMINISTRO FINALIZADO]\n  Consumo total: {consumed_kwh:.2f} kWh\n  Importe total: {total_price:.2f} EUR\n")
 
     def start(self):
-        self.thread_kafka = threading.Thread(target=self._listen_kafka, daemon=True)
-        self.thread_kafka.start()
-        self.thread_monitor = threading.Thread(target=self._listen_monitor, daemon=True)
-        self.thread_monitor.start()
+        self.thread_kafka = threading.Thread(target=self._listen_kafka, daemon=True).start()
+        self.thread_monitor = threading.Thread(target=self._listen_monitor, daemon=True).start()
 
-        if self.gui_mode:
-            self._start_gui()
-        else:
-            self._start_cli()
-
-    def _start_gui(self):
-        """Inicia el modo GUI y CLI simultáneamente"""
-        try:
-            from gui import EVChargingGUI
-            self.gui = EVChargingGUI(self)
-            self.gui.log_message("Sistema iniciado correctamente")
-            
-            # Iniciar CLI en un thread separado
-            cli_thread = threading.Thread(target=self._start_cli_background, daemon=True)
-            cli_thread.start()
-            
-            # GUI corre en el hilo principal
-            self.gui.run()
-        except ImportError:
-            print("[ERROR] No se pudo importar el módulo GUI. Asegúrese de que gui.py existe.")
-            print("[INFO] Cambiando a modo CLI...\n")
-            self.gui_mode = False
-            self._start_cli()
-        except Exception as e:
-            print(f"[ERROR] Error al iniciar GUI: {e}")
-            print("[INFO] Cambiando a modo CLI...\n")
-            self.gui_mode = False
-            self._start_cli()
-    
-    def _start_cli_background(self):
-        """CLI en segundo plano cuando hay GUI activa"""
-        time.sleep(0.5)  # Esperar a que GUI se inicialice
-        print(f"\n=== Punto de Carga: {self.cp_id} (Modo GUI + CLI) ===")
-        print("Comandos CLI disponibles:")
+        print(f"\n=== Punto de Carga: {self.cp_id} ===")
+        print("Comandos disponibles:")
         print("  S <DRIVER_ID>  - Solicitar suministro para conductor")
         print("  F              - Finalizar suministro actual")
         print("  A              - Simular avería")
         print("  R              - Reparar avería")
         print("  salir          - Salir de la aplicación\n")
 
-        while self.running:
+        while True:
             try:
                 u_input = input("> ").strip()
 
                 if not u_input:
                     continue
                 if u_input.lower() == 'salir':
-                    print("\n[INFO] Cerrando desde CLI...\n")
-                    if self.gui and hasattr(self.gui, 'root'):
-                        self.gui.root.after(0, self.gui.root.destroy)
                     break
                 elif u_input.upper() == 'A':
                     with self.lock:
@@ -428,7 +330,7 @@ class EVChargingPointEngine:
                                 print("\n[ERROR] El punto de carga ya está suministrando.\n")
                             else:
                                 print(f"\n[SOLICITUD] Para conductor: {driver_id}\n")
-                                request = {'conductor_id': driver_id, 'cp_id': self.cp_id, 'origen': 'CLI'}
+                                request = {'conductor_id': driver_id, 'cp_id': self.cp_id, 'origen': 'CP'}
                                 try:
                                     self.producer.send('solicitudes_suministro', request)
                                     self.producer.flush()
@@ -441,71 +343,9 @@ class EVChargingPointEngine:
                     print("\n[ERROR] Comando no reconocido.\n")
 
             except (EOFError, KeyboardInterrupt):
-                print("\n[INFO] Cerrando desde CLI...\n")
-                if self.gui and hasattr(self.gui, 'root'):
-                    self.gui.root.after(0, self.gui.root.destroy)
-                break
-            except Exception as e:
-                print(f"\n[ERROR] Error interno al procesar el comando: {e}\n")
-
-    def _start_cli(self):
-        """Inicia el modo CLI (línea de comandos)"""
-        print(f"\n=== Punto de Carga: {self.cp_id} ===")
-        print("Comandos disponibles:")
-        print("  S <DRIVER_ID>  - Solicitar suministro para conductor")
-        print("  F              - Finalizar suministro actual")
-        print("  A              - Simular avería")
-        print("  R              - Reparar avería")
-        print("  salir          - Salir de la aplicación\n")
-
-        while True:
-            try:
-                u_input = input("> ").strip()
-
-                if not u_input:
-                    continue
-                if u_input.lower() == 'salir':
-                    break
-                elif u_input.upper() == 'A':
-                    with self.lock:
-                        self.breakdown_status = True
-                    self._log("\n[AVERIA] Estado: AVERIA\n")
-                elif u_input.upper() == 'R':
-                    with self.lock:
-                        self.breakdown_status = False
-                    self._log("\n[REPARADO] Estado: OK\n")
-                elif u_input.upper() == 'F':
-                    with self.lock:
-                        if self.charging:
-                            self.charging = False
-                            self._log("\n[FINALIZANDO] Desenchufando vehículo...\n")
-                        else:
-                            self._log("\n[ERROR] No hay suministro activo.\n")
-                elif u_input.upper().startswith('S '):
-                    parts = u_input.split(maxsplit=1)
-                    if len(parts) > 1:
-                        driver_id = parts[1].strip()
-                        with self.lock:
-                            if self.charging:
-                                self._log("\n[ERROR] El punto de carga ya está suministrando.\n")
-                            else:
-                                self._log(f"\n[SOLICITUD] Para conductor: {driver_id}\n")
-                                request = {'conductor_id': driver_id, 'cp_id': self.cp_id, 'origen': 'CP'}
-                                try:
-                                    self.producer.send('solicitudes_suministro', request)
-                                    self.producer.flush()
-                                except Exception:
-                                    self._log("\n[ERROR] Kafka no disponible. Reintentando conexión...\n")
-                                    self._reconnect_kafka()
-                    else:
-                        self._log("\n[ERROR] Formato: S <DRIVER_ID>\n") 
-                else:
-                    self._log("\n[ERROR] Comando no reconocido.\n")
-
-            except (EOFError, KeyboardInterrupt):
                 break
             except Exception:
-                self._log("\n[ERROR] Error interno al procesar el comando.\n")
+                print("\n[ERROR] Error interno al procesar el comando.\n")
 
         self.end()
 
@@ -533,19 +373,15 @@ class EVChargingPointEngine:
 
 def main():
     if len(sys.argv) < 4:
-        print("Uso: python main.py [ip_broker:port_broker] [ip_monitor:port_monitor] <cp_id> [--gui]")
-        print("Ejemplo CLI: python main.py localhost:9092 localhost:5050 CP001")
-        print("Ejemplo GUI: python main.py localhost:9092 localhost:5050 CP001 --gui\n")
+        print("Uso: python main.py [ip_broker:port_broker] [ip_monitor:port_monitor] <cp_id>")
+        print("Ejemplo: python main.py localhost:9092 localhost:5050 CP001\n")
         sys.exit(1)
 
     broker = sys.argv[1]
     monitor_ip, monitor_port = sys.argv[2].split(':')
     cp_id = sys.argv[3]
     
-    # Detectar modo GUI
-    gui_mode = '--gui' in sys.argv or '-g' in sys.argv
-    
-    engine = EVChargingPointEngine(broker, cp_id, monitor_ip, monitor_port, gui_mode=gui_mode)
+    engine = EVChargingPointEngine(broker, cp_id, monitor_ip, monitor_port)
     time.sleep(1)
     engine.start()
 
