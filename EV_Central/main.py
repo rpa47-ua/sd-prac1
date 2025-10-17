@@ -97,7 +97,7 @@ class EVCentral:
         all_topics = [
             'solicitudes_suministro', 'respuestas_conductor', 'respuestas_cp',
             'comandos_cp', 'telemetria_cp', 'fin_suministro', 'averias',
-            'recuperacion_cp', 'tickets', 'notificaciones'
+            'recuperacion_cp', 'tickets', 'notificaciones', 'estado_cps'
         ]
         self.kafka.crear_topics_si_no_existen(all_topics)
 

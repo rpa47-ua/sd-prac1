@@ -15,6 +15,7 @@ class EVDriver:
         self.current_consumption = 0
         self.current_price = 0
         self.last_telemetry_time = 0
+        self.cps_disponibles = {}
 
         self.lock = threading.Lock()
 
@@ -38,7 +39,7 @@ class EVDriver:
                 enable_auto_commit=True
             )
 
-            self.consumer.subscribe(['respuestas_conductor', 'telemetria_cp', 'tickets', 'notificaciones', 'fin_suministro'])
+            self.consumer.subscribe(['respuestas_conductor', 'telemetria_cp', 'tickets', 'notificaciones', 'fin_suministro', 'estado_cps'])
 
             print(f"\n[OK] Conectado a Kafka en {self.broker}\n")
         except Exception:
@@ -132,6 +133,12 @@ class EVDriver:
                     self.current_consumption = 0
                     self.current_price = 0
 
+        elif topic == 'estado_cps':
+            cp_id = kmsg.get('cp_id')
+            estado = kmsg.get('estado')
+            with self.lock:
+                self.cps_disponibles[cp_id] = estado
+
     def _listen_kafka(self):
         while self.running:
             try:
@@ -214,21 +221,48 @@ class EVDriver:
         except:
             pass
 
+    def _mostrar_cps_disponibles(self):
+        with self.lock:
+            if not self.cps_disponibles:
+                print("\n[INFO] No hay puntos de carga registrados aún.\n")
+                return
+
+            print("\n=== PUNTOS DE CARGA ===")
+
+            for cp_id, estado in sorted(self.cps_disponibles.items()):
+                if estado == 'desconectado':
+                    continue
+                elif estado == 'activado':
+                    print(f"  ✓ {cp_id:<10} - Disponible")
+                elif estado == 'suministrando':
+                    print(f"  ⊗ {cp_id:<10} - Suministrando")
+                elif estado == 'averiado':
+                    print(f"  ✗ {cp_id:<10} - Averiado")
+                elif estado == 'parado':
+                    print(f"  ⊗ {cp_id:<10} - Parado")
+                else:
+                    print(f"  ? {cp_id:<10} - {estado.capitalize()}")
+
+            print("=" * 35 + "\n")
+
     def start(self):
         print(f"=== Conductor: {self.driver_id} ===\n")
         print("Comandos disponibles:\n"
               "  <CP_ID>  - Solicitar suministro en punto de carga\n"
+              "  lista    - Ver puntos de carga disponibles\n"
               "  file     - Procesar solicitudes desde suministros.txt\n"
               "  salir    - Salir de la aplicación\n")
 
         while True:
-            try: 
+            try:
                 u_input = input("> ").strip()
 
                 if not u_input:
                     continue
                 if u_input.lower() == 'salir':
                     break
+                elif u_input.lower() == 'lista':
+                    self._mostrar_cps_disponibles()
                 elif u_input.lower() == 'file':
                     self._file_process("suministros.txt")
                 else:

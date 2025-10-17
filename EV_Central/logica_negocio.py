@@ -2,16 +2,46 @@
 Lógica de negocio para EV_Central
 Contiene las reglas y validaciones del sistema
 """
+import time
+import threading
 
 
 class LogicaNegocio:
     def __init__(self, db, kafka_handler, servidor_socket=None):
         self.db = db
         self.kafka = kafka_handler
-        self.servidor_socket = servidor_socket  # Referencia al servidor socket para enviar comandos
-        self.suministros_activos = {}  # {cp_id: {'conductor_id': ..., 'suministro_id': ...}}
+        self.servidor_socket = servidor_socket
+        self.suministros_activos = {}
+        self.colas_espera = {}
+        self.running = True
 
-        # NO recuperar suministros aquí - se recuperarán cuando los CPs se reconecten
+        threading.Thread(target=self._publicar_estados_periodicamente, daemon=True).start()
+
+    def _publicar_estado_cp(self, cp_id: str, estado: str):
+        """
+        Publica el estado de un CP en el topic estado_cps para que los drivers lo vean en tiempo real
+        """
+        self.kafka.enviar_mensaje('estado_cps', {
+            'cp_id': cp_id,
+            'estado': estado
+        })
+        time.sleep(0.1)
+
+    def _publicar_estados_periodicamente(self):
+        """
+        Publica el estado de todos los CPs cada 10 segundos para que los Drivers nuevos puedan verlos
+        """
+        time.sleep(5)
+        while self.running:
+            try:
+                cps = self.db.obtener_todos_los_cps()
+                for cp in cps:
+                    if cp['estado'] != 'desconectado':
+                        self._publicar_estado_cp(cp['id'], cp['estado'])
+            except Exception as e:
+                print(f"[ERROR] Error publicando estados periódicamente: {e}")
+
+            time.sleep(10)
 
     def autenticar_cp(self, cp_id: str) -> bool:
         """
@@ -52,7 +82,7 @@ class LogicaNegocio:
         """
         conductor_id = mensaje.get('conductor_id')
         cp_id = mensaje.get('cp_id')
-        origen = mensaje.get('origen', 'CONDUCTOR')  # Por defecto asume que viene del conductor
+        origen = mensaje.get('origen', 'CONDUCTOR')
 
         print(f"\nProcesando solicitud [{origen}]: Conductor {conductor_id} -> CP {cp_id}")
 
@@ -66,13 +96,30 @@ class LogicaNegocio:
         cp = self.db.obtener_cp(cp_id)
         if not cp:
             print(f"[ERROR] CP {cp_id} no existe")
-            self._enviar_respuesta_solicitud(conductor_id, cp_id, False, "CP no encontrado", origen)
+            self._enviar_respuesta_solicitud(conductor_id, cp_id, False, "CP no encontrado", origen, None)
             return
 
         # 3. Verificar que el CP esta disponible
         if cp['estado'] != 'activado':
-            print(f"[ERROR] CP {cp_id} no esta disponible (estado: {cp['estado']})")
-            self._enviar_respuesta_solicitud(conductor_id, cp_id, False, f"CP no disponible: {cp['estado']}", origen)
+            print(f"[INFO] CP {cp_id} no esta disponible (estado: {cp['estado']})")
+
+            # Solo poner en cola si está suministrando (ocupado)
+            if cp['estado'] == 'suministrando':
+                if cp_id not in self.colas_espera:
+                    self.colas_espera[cp_id] = []
+
+                self.colas_espera[cp_id].append({
+                    'conductor_id': conductor_id,
+                    'origen': origen
+                })
+
+                posicion = len(self.colas_espera[cp_id])
+                print(f"[COLA] Conductor {conductor_id} añadido a la cola de {cp_id} (posición {posicion})")
+                self._enviar_respuesta_solicitud(conductor_id, cp_id, False, f"CP ocupado. En cola, posición {posicion}", origen, None)
+            else:
+                # Rechazar directamente si está desconectado, averiado o parado
+                print(f"[RECHAZO] Solicitud rechazada para {cp_id} (estado: {cp['estado']})")
+                self._enviar_respuesta_solicitud(conductor_id, cp_id, False, f"CP no disponible: {cp['estado']}", origen, None)
             return
 
         # 4. Todo OK - Crear suministro y autorizar
@@ -90,7 +137,6 @@ class LogicaNegocio:
         print(f"[OK] Suministro autorizado (ID: {suministro_id})")
 
         # 5. Notificar según el origen
-        # Para Izan, añadi que tambien mande el id del suministro
         self._enviar_respuesta_solicitud(conductor_id, cp_id, True, "Suministro autorizado", origen, suministro_id)
 
         # 6. Notificar al CP para que inicie el suministro
@@ -100,6 +146,7 @@ class LogicaNegocio:
             'conductor_id': conductor_id,
             'suministro_id': suministro_id
         })
+        time.sleep(2)
                                                                                                                       #cambio
     def _enviar_respuesta_solicitud(self, conductor_id: str, cp_id: str, autorizado: bool, mensaje: str, origen: str, suministro_id: int):
         """
@@ -108,23 +155,65 @@ class LogicaNegocio:
         - Si viene del CP: envía a 'respuestas_cp' (para que el CP informe al usuario)
         """
         if origen == 'CP':
-            # Responder al CP para que muestre el resultado en su interfaz
             self.kafka.enviar_mensaje('respuestas_cp', {
                 'cp_id': cp_id,
                 'conductor_id': conductor_id,
                 'autorizado': autorizado,
                 'mensaje': mensaje,
-                'suministro_id': suministro_id # Añadido
+                'suministro_id': suministro_id
             })
+            time.sleep(2)
         else:
-            # Responder al conductor (aplicación móvil/driver)
             self.kafka.enviar_mensaje('respuestas_conductor', {
                 'conductor_id': conductor_id,
                 'cp_id': cp_id,
                 'autorizado': autorizado,
                 'mensaje': mensaje,
-                'suministro_id': suministro_id # Añadido
+                'suministro_id': suministro_id
             })
+            time.sleep(2)
+
+    def _procesar_siguiente_en_cola(self, cp_id: str):
+        """
+        Procesa la siguiente solicitud en cola para un CP que se ha liberado
+        """
+        if cp_id not in self.colas_espera or len(self.colas_espera[cp_id]) == 0:
+            print(f"[COLA] No hay solicitudes en espera para {cp_id}")
+            return
+
+        siguiente = self.colas_espera[cp_id].pop(0)
+        conductor_id = siguiente['conductor_id']
+        origen = siguiente['origen']
+
+        print(f"[COLA] Procesando siguiente en cola: Conductor {conductor_id} -> CP {cp_id}")
+
+        cp = self.db.obtener_cp(cp_id)
+        if not cp or cp['estado'] != 'activado':
+            print(f"[ERROR] CP {cp_id} no disponible para procesar cola")
+            self.colas_espera[cp_id].insert(0, siguiente)
+            return
+
+        suministro_id = self.db.crear_suministro(conductor_id, cp_id)
+        self.db.actualizar_estado_cp(cp_id, 'suministrando')
+
+        self.suministros_activos[cp_id] = {
+            'conductor_id': conductor_id,
+            'suministro_id': suministro_id,
+            'consumo_actual': 0.0,
+            'importe_actual': 0.0
+        }
+
+        print(f"[OK] Suministro autorizado desde cola (ID: {suministro_id})")
+
+        self._enviar_respuesta_solicitud(conductor_id, cp_id, True, "Suministro autorizado (desde cola)", origen, suministro_id)
+
+        self.kafka.enviar_mensaje('comandos_cp', {
+            'tipo': 'INICIAR_SUMINISTRO',
+            'cp_id': cp_id,
+            'conductor_id': conductor_id,
+            'suministro_id': suministro_id
+        })
+        time.sleep(2)
 
     def procesar_telemetria_cp(self, mensaje: dict):
         """
@@ -187,6 +276,7 @@ class LogicaNegocio:
                 'consumo_kwh': consumo_kwh,
                 'importe_total': importe
             })
+            time.sleep(2)
 
             # Eliminar de suministros activos
             del self.suministros_activos[cp_id]
@@ -197,13 +287,12 @@ class LogicaNegocio:
             # Iniciar hilo para esperar 4 segundos antes de activar el CP
             import threading
             def activar_tras_espera():
-                import time
                 time.sleep(4)
-                # Verificar que el CP no ha cambiado de estado (avería, parado, etc.)
                 cp_actual = self.db.obtener_cp(cp_id)
                 if cp_actual and cp_actual['estado'] == 'suministrando':
                     self.db.actualizar_estado_cp(cp_id, 'activado')
                     print(f"[OK] CP {cp_id} disponible de nuevo tras período de espera")
+                    self._procesar_siguiente_en_cola(cp_id)
 
             threading.Thread(target=activar_tras_espera, daemon=True).start()
         else:
@@ -220,18 +309,17 @@ class LogicaNegocio:
                     'consumo_kwh': consumo_kwh,
                     'importe_total': importe
                 })
+                time.sleep(2)
                 print(f"[OK] Suministro {suministro_id} finalizado (recuperado). Ticket enviado a {conductor_id}")
                 print(f"[ESPERA] CP {cp_id} esperará 4 segundos antes de estar disponible de nuevo...")
 
-                # Iniciar hilo para esperar 4 segundos antes de activar el CP
-                import threading
                 def activar_tras_espera():
-                    import time
                     time.sleep(4)
                     cp_actual = self.db.obtener_cp(cp_id)
                     if cp_actual and cp_actual['estado'] == 'suministrando':
                         self.db.actualizar_estado_cp(cp_id, 'activado')
                         print(f"[OK] CP {cp_id} disponible de nuevo tras período de espera")
+                        self._procesar_siguiente_en_cola(cp_id)
 
                 threading.Thread(target=activar_tras_espera, daemon=True).start()
 
@@ -264,6 +352,7 @@ class LogicaNegocio:
                 'cp_id': cp_id,
                 'mensaje': 'Suministro interrumpido por avería'
             })
+            time.sleep(2)
 
             del self.suministros_activos[cp_id]
 
@@ -306,18 +395,17 @@ class LogicaNegocio:
             return
 
         if estado_engine == 'OK':
-            # Engine OK -> CP disponible
-            # Solo cambiar a activado si no está suministrando actualmente
             if estado_actual != 'suministrando':
                 print(f"[ESTADO] CP {cp_id} -> activado (Engine OK)")
                 resultado = self.db.actualizar_estado_cp(cp_id, 'activado')
                 print(f"[DEBUG] Actualización BD resultado: {resultado}")
+                self._publicar_estado_cp(cp_id, 'activado')
 
         elif estado_engine == 'SUMINISTRANDO':
-            # Engine reporta que está suministrando
             if estado_actual != 'suministrando':
                 print(f"[ESTADO] CP {cp_id} -> suministrando (Engine reporta SUMINISTRANDO)")
                 self.db.actualizar_estado_cp(cp_id, 'suministrando')
+                self._publicar_estado_cp(cp_id, 'suministrando')
 
             # Recuperar suministro de BD si no está en memoria (recuperación tras caída de Central)
             if cp_id not in self.suministros_activos:
@@ -335,14 +423,14 @@ class LogicaNegocio:
                     print(f"[AVISO] Engine reporta SUMINISTRANDO pero no hay suministro activo en BD para {cp_id}")
 
         elif estado_engine == 'PARADO':
-            # Monitor reporta que está parado manualmente
             print(f"[ESTADO] CP {cp_id} -> parado (Monitor reporta PARADO)")
             self.db.actualizar_estado_cp(cp_id, 'parado')
+            self._publicar_estado_cp(cp_id, 'parado')
 
         elif estado_engine == 'AVERIA':
-            # Engine AVERIA -> CP averiado
             print(f"[AVERIA] CP {cp_id} -> averiado (Engine reporta AVERIA)")
             self.db.actualizar_estado_cp(cp_id, 'averiado')
+            self._publicar_estado_cp(cp_id, 'averiado')
 
             # Si estaba suministrando, finalizar de emergencia
             if cp_id in self.suministros_activos:
@@ -361,6 +449,7 @@ class LogicaNegocio:
                     'cp_id': cp_id,
                     'mensaje': f'Suministro interrumpido: Engine de CP {cp_id} averiado'
                 })
+                time.sleep(2)
 
                 del self.suministros_activos[cp_id]
 
@@ -372,8 +461,8 @@ class LogicaNegocio:
         """
         print(f"\n[DESCONEXIÓN] Monitor de CP {cp_id} desconectado")
 
-        # Actualizar estado a desconectado
         self.db.actualizar_estado_cp(cp_id, 'desconectado')
+        self._publicar_estado_cp(cp_id, 'desconectado')
 
         # Si estaba suministrando, finalizar de emergencia
         if cp_id in self.suministros_activos:
@@ -394,6 +483,7 @@ class LogicaNegocio:
                 'cp_id': cp_id,
                 'mensaje': f'Suministro interrumpido: CP {cp_id} desconectado'
             })
+            time.sleep(2)
 
             del self.suministros_activos[cp_id]
 

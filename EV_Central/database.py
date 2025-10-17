@@ -30,8 +30,19 @@ class Database:
             self.connection.close()
             print("[OK] Desconectado de BD")
 
+    def _verificar_conexion(self):
+        """Verifica y restablece la conexión si es necesaria"""
+        try:
+            if self.connection:
+                self.connection.ping(reconnect=True)
+            else:
+                self.conectar()
+        except Exception:
+            self.conectar()
+
     def obtener_todos_los_cps(self) -> List[Dict]:
         try:
+            self._verificar_conexion()
             with self.connection.cursor() as cursor:
                 cursor.execute("SELECT * FROM charging_points")
                 return cursor.fetchall()
@@ -41,6 +52,7 @@ class Database:
 
     def obtener_cp(self, cp_id: str) -> Optional[Dict]:
         try:
+            self._verificar_conexion()
             with self.connection.cursor() as cursor:
                 cursor.execute("SELECT * FROM charging_points WHERE id = %s", (cp_id,))
                 return cursor.fetchone()
@@ -66,6 +78,7 @@ class Database:
 
     def actualizar_estado_cp(self, cp_id: str, estado: str):
         try:
+            self._verificar_conexion()
             with self.connection.cursor() as cursor:
                 cursor.execute("UPDATE charging_points SET estado = %s WHERE id = %s", (estado, cp_id))
                 return True
@@ -95,6 +108,7 @@ class Database:
 
     def crear_suministro(self, conductor_id: str, cp_id: str) -> Optional[int]:
         try:
+            self._verificar_conexion()
             with self.connection.cursor() as cursor:
                 cursor.execute("INSERT INTO suministros (conductor_id, cp_id, estado) VALUES (%s, %s, 'autorizado')",
                              (conductor_id, cp_id))
@@ -105,6 +119,7 @@ class Database:
 
     def actualizar_suministro(self, suministro_id: int, consumo_kwh: float, importe_total: float):
         try:
+            self._verificar_conexion()
             with self.connection.cursor() as cursor:
                 cursor.execute("UPDATE suministros SET consumo_kwh = %s, importe_total = %s, estado = 'en_curso' WHERE id = %s",
                              (consumo_kwh, importe_total, suministro_id))
@@ -115,6 +130,7 @@ class Database:
 
     def finalizar_suministro(self, suministro_id: int, consumo_kwh: float, importe_total: float):
         try:
+            self._verificar_conexion()
             with self.connection.cursor() as cursor:
                 cursor.execute("""UPDATE suministros SET consumo_kwh = %s, importe_total = %s,
                                  fecha_fin = CURRENT_TIMESTAMP, estado = 'completado' WHERE id = %s""",
@@ -126,6 +142,7 @@ class Database:
 
     def obtener_suministro_activo(self, cp_id: str) -> Optional[Dict]:
         try:
+            self._verificar_conexion()
             with self.connection.cursor() as cursor:
                 cursor.execute("""SELECT * FROM suministros WHERE cp_id = %s AND estado IN ('autorizado', 'en_curso')
                                  ORDER BY fecha_inicio DESC LIMIT 1""", (cp_id,))
