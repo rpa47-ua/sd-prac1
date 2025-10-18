@@ -191,7 +191,7 @@ class EVDriver:
             print("\n[SOLICITUD] Petición de listado de puntos de carga enviada.\n")
 
             wait_time = 0
-            while not self.cp_list and wait_time < 2:
+            while not self.cp_list and wait_time < 3:
                 time.sleep(0.2)
                 wait_time += 0.2
 

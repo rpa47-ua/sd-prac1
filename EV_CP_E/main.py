@@ -31,11 +31,13 @@ def recv(conn):
 
 
 class EVChargingPointEngine:
-    def __init__(self, broker, cp_id, monitor_ip, monitor_port):
+    def __init__(self, broker, cp_id, monitor_ip, monitor_port, gui_mode=False):
         self.broker = broker
         self.cp_id = cp_id
         self.monitor_ip = monitor_ip
         self.monitor_port = int(monitor_port)
+        self.gui_mode = gui_mode
+        self.gui = None
 
         self.breakdown_status = False
         self.charging = False
@@ -205,7 +207,6 @@ class EVChargingPointEngine:
 
         consumed_kwh = 0
         total_price = 0
-        pending_telemetry = []
 
         while True:
             with self.lock:
@@ -219,6 +220,7 @@ class EVChargingPointEngine:
 
             consumed_kwh += self.kWH
             total_price = consumed_kwh * self.price
+            
             telemetry = {
                 'cp_id': self.cp_id,
                 'conductor_id': driver_id,
@@ -230,10 +232,8 @@ class EVChargingPointEngine:
                 if self.producer:
                     self.producer.send('telemetria_cp', telemetry)
                     self.producer.flush()
-                    pending_telemetry.clear()
             except Exception:
-                pending_telemetry.append(telemetry)
-                self._reconnect_kafka()
+                pass
 
             time.sleep(1)
 
@@ -246,12 +246,12 @@ class EVChargingPointEngine:
                 'importe_total': round(total_price, 2)
             }
             try:
-                self.producer.send('fin_suministro', end_msg)
-                self.producer.flush()
-                self._log("OK", "Fin de suministro comunicado a la central.")
+                if self.producer:
+                    self.producer.send('fin_suministro', end_msg)
+                    self.producer.flush()
+                    self._log("OK", "Fin de suministro comunicado a la central.")
             except Exception:
                 self._log("ERROR", "No se pudo comunicar el fin de suministro.")
-                self._reconnect_kafka()
 
         with self.lock:
             self.charging = False
@@ -282,13 +282,24 @@ class EVChargingPointEngine:
                 cp = self.cp_id
 
             duration = int(time.time() - start_time)
+            
             with self.print_lock:
                 print(
                     f"\rCP {cp} | Conductor {driver} | Tiempo {duration}s | "
                     f"Consumo {consumed_kwh:.2f} kWh | Total {total_price:.2f} EUR",
                     end='', flush=True
                 )
+            
+            if self.gui_mode and self.gui and hasattr(self.gui, '_update_metrics'):
+                try:
+                    if hasattr(self.gui, 'root') and self.gui.root.winfo_exists():
+                        self.gui.root.after(0, lambda c=consumed_kwh, p=total_price, d=duration: 
+                                           self.gui._update_metrics(c, p, d))
+                except:
+                    pass
+            
             time.sleep(1)
+            
         with self.print_lock:
             print()
 
@@ -298,6 +309,38 @@ class EVChargingPointEngine:
         threading.Thread(target=self._listen_kafka, daemon=True).start()
         threading.Thread(target=self._listen_monitor, daemon=True).start()
 
+        if self.gui_mode:
+            self._start_with_gui()
+        else:
+            self._start_cli()
+
+    def _start_with_gui(self):
+        try:
+            from gui import EVChargingGUI
+            self.gui = EVChargingGUI(self)
+            
+            cli_thread = threading.Thread(target=self._start_cli, daemon=True)
+            cli_thread.start()
+            
+            try:
+                self.gui.run()
+            except:
+                pass
+        except ImportError:
+            print("\n[ERROR] No se pudo importar el módulo GUI. Asegúrese de que gui.py existe.")
+            print("[INFO] Cambiando a modo CLI...\n")
+            self.gui_mode = False
+            self._start_cli()
+        except Exception as e:
+            print(f"\n[ERROR] Error al iniciar GUI: {e}")
+            print("[INFO] Cambiando a modo CLI...\n")
+            self.gui_mode = False
+            self._start_cli()
+
+    def _start_cli(self):
+        if self.gui_mode:
+            time.sleep(0.5)
+            
         self._log("OK", f"Punto de carga {self.cp_id} operativo.\n")
         print("=== MENÚ DE COMANDOS ===")
         print("  S <ID_CONDUCTOR>  → Solicitar suministro")
@@ -314,6 +357,11 @@ class EVChargingPointEngine:
                     continue
 
                 if cmd.upper() == 'SALIR':
+                    if self.gui_mode and self.gui:
+                        try:
+                            self.gui.root.after(0, self.gui.root.destroy)
+                        except:
+                            pass
                     break
                 elif cmd.upper() == 'A':
                     with self.lock:
@@ -351,10 +399,17 @@ class EVChargingPointEngine:
                 else:
                     self._log("INFO", "Comando no reconocido.")
             except (EOFError, KeyboardInterrupt):
+                if self.gui_mode and self.gui:
+                    try:
+                        self.gui.root.after(0, self.gui.root.destroy)
+                    except:
+                        pass
                 break
             except Exception:
                 self._log("ERROR", "Error interno al procesar el comando.")
-        self.end()
+        
+        if not self.gui_mode:
+            self.end()
 
     def end(self):
         self._log("INFO", "Cerrando aplicación...")
@@ -373,15 +428,18 @@ class EVChargingPointEngine:
 
 def main():
     if len(sys.argv) < 4:
-        print("Uso: python main.py [ip_broker:port_broker] [ip_monitor:port_monitor] <cp_id>")
-        print("Ejemplo: python main.py localhost:9092 localhost:5050 CP001")
+        print("Uso: python main.py [ip_broker:port_broker] [ip_monitor:port_monitor] <cp_id> [--gui]")
+        print("Ejemplo CLI: python main.py localhost:9092 localhost:5050 CP001")
+        print("Ejemplo GUI: python main.py localhost:9092 localhost:5050 CP001 --gui")
         sys.exit(1)
 
     broker = sys.argv[1]
     monitor_ip, monitor_port = sys.argv[2].split(':')
     cp_id = sys.argv[3]
+    
+    gui_mode = '--gui' in sys.argv or '-g' in sys.argv
 
-    engine = EVChargingPointEngine(broker, cp_id, monitor_ip, monitor_port)
+    engine = EVChargingPointEngine(broker, cp_id, monitor_ip, monitor_port, gui_mode=gui_mode)
     time.sleep(1)
     engine.start()
 
