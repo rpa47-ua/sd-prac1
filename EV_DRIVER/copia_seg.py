@@ -5,11 +5,9 @@ import threading
 from kafka import KafkaProducer, KafkaConsumer
 
 class EVDriver:
-    def __init__(self, broker, driver_id, gui_mode=False):
+    def __init__(self, broker, driver_id):
         self.broker = broker
         self.driver_id = driver_id
-        self.gui_mode = gui_mode
-        self.gui = None
 
         self.charging = False
         self.running = True
@@ -55,6 +53,7 @@ class EVDriver:
         while self.running:
             print("\n[INFO] Reintentando conexión con Kafka...\n")
             try:
+
                 if self.consumer:
                     self.consumer.close()
                 if self.producer:
@@ -113,6 +112,7 @@ class EVDriver:
             print("[OK] Solicitud enviada correctamente.\n")
         except Exception:
             print("\n[ERROR] No se pudo enviar la solicitud al broker Kafka.\n")
+            self._reconnect_kafka()
 
     def _file_process(self, original_file):
         try:
@@ -130,9 +130,6 @@ class EVDriver:
                 time.sleep(4)
 
     def _display_stats(self):
-        if self.gui_mode:
-            return
-            
         print("\n[SUMINISTRO EN CURSO]\n")
         start_time = time.time()
         
@@ -147,7 +144,7 @@ class EVDriver:
             
             duration = int(time.time() - start_time)
             
-            if time.time() - last_data > 5:
+            if time.time() - last_data > 1:
                 print(f"\n[ERROR] No se reciben datos de telemetría del CP {cp}.\n"
                       f"[INFO] Finalizando suministro por inactividad...\n")
                 with self.lock:
@@ -200,6 +197,7 @@ class EVDriver:
 
         except Exception:
             print("\n[ERROR] No se pudo enviar la solicitud al broker Kafka.\n")
+            self._reconnect_kafka()
 
     ### UTILIDAD 
 
@@ -208,7 +206,7 @@ class EVDriver:
             if kmsg.get('autorizado', False):
                 print(f"\n[AUTORIZADO] {kmsg.get('mensaje', 'Suministro autorizado')}\n")
                 with self.lock:
-                    if self.charging:
+                    if self.charging: # Por si cae central para no volver a _display_stats
                         return 
                     
                     self.charging = True
@@ -258,89 +256,8 @@ class EVDriver:
                 estado = kmsg.get('estado')
                 with self.lock:
                     self.cp_list[cp_id] = estado
-                
-                if self.gui_mode and self.gui and hasattr(self.gui, '_update_cp_list'):
-                    try:
-                        if hasattr(self.gui, 'root') and self.gui.root.winfo_exists():
-                            self.gui.root.after(0, self.gui._update_cp_list)
-                    except:
-                        pass
 
     ### DRIVER
-
-    def start(self):
-        if self.gui_mode:
-            self._start_with_gui()
-        else:
-            self._start_cli()
-
-    def _start_with_gui(self):
-        try:
-            from gui import EVDriverGUI
-            self.gui = EVDriverGUI(self)
-            
-            cli_thread = threading.Thread(target=self._start_cli, daemon=True)
-            cli_thread.start()
-            
-            try:
-                self.gui.run()
-            except:
-                pass
-        except ImportError:
-            print("\n[ERROR] No se pudo importar el módulo GUI. Asegúrese de que driver_gui.py existe.")
-            print("[INFO] Cambiando a modo CLI...\n")
-            self.gui_mode = False
-            self._start_cli()
-        except Exception as e:
-            print(f"\n[ERROR] Error al iniciar GUI: {e}")
-            print("[INFO] Cambiando a modo CLI...\n")
-            self.gui_mode = False
-            self._start_cli()
-
-    def _start_cli(self):
-        if self.gui_mode:
-            time.sleep(0.5)
-            
-        print(f"=== Conductor: {self.driver_id} ===\n")
-        print("Comandos disponibles:\n"
-              "  <CP_ID>  - Solicitar suministro en punto de carga\n"
-              "  lista    - Ver puntos de carga disponibles\n"
-              "  file     - Procesar solicitudes desde suministros.txt\n"
-              "  salir    - Salir de la aplicación\n")
-
-        while self.running:
-            try:
-                u_input = input("> ").strip()
-
-                if not u_input:
-                    continue
-                if u_input.lower() == 'salir':
-                    if self.gui_mode and self.gui:
-                        try:
-                            self.gui.root.after(0, self.gui.root.destroy)
-                        except:
-                            pass
-                    break
-                elif u_input.lower() == 'lista':
-                    self._request_cp_list()
-                    self._list_cps()
-                elif u_input.lower() == 'file':
-                    self._file_process("suministros.txt")
-                else:
-                    self._send_charging_request(u_input.upper())
-                    
-            except (EOFError, KeyboardInterrupt):
-                if self.gui_mode and self.gui:
-                    try:
-                        self.gui.root.after(0, self.gui.root.destroy)
-                    except:
-                        pass
-                break
-            except Exception:
-                print("\n[ERROR] Se produjo un error inesperado al procesar el comando.\n")
-        
-        if not self.gui_mode:
-            self.end()
 
     def end(self):
         print("\n[INFO] Cerrando aplicación...\n")
@@ -362,20 +279,47 @@ class EVDriver:
         except:
             pass
 
+    def start(self):
+        print(f"=== Conductor: {self.driver_id} ===\n")
+        print("Comandos disponibles:\n"
+              "  <CP_ID>  - Solicitar suministro en punto de carga\n"
+              "  lista    - Ver puntos de carga disponibles\n"
+              "  file     - Procesar solicitudes desde suministros.txt\n"
+              "  salir    - Salir de la aplicación\n")
+
+        while True:
+            try:
+                u_input = input("> ").strip()
+
+                if not u_input:
+                    continue
+                if u_input.lower() == 'salir':
+                    break
+                elif u_input.lower() == 'lista':
+                    self._request_cp_list()
+                    self._list_cps()
+                elif u_input.lower() == 'file':
+                    self._file_process("suministros.txt")
+                else:
+                    self._send_charging_request(u_input.upper())
+                    
+            except (EOFError, KeyboardInterrupt):
+                break
+            except Exception:
+                print("\n[ERROR] Se produjo un error inesperado al procesar el comando.\n")
+        
+        self.end()
 
 def main():
     if len(sys.argv) < 3:
-        print("\nUso: python main.py [ip_broker:port_broker] <driver_id> [--gui]\n"
-              "Ejemplo CLI: python main.py localhost:9092 DRV001\n"
-              "Ejemplo GUI: python main.py localhost:9092 DRV001 --gui\n")
+        print("\nUso: python main.py [ip_broker:port_broker] <driver_id>\n"
+              "Ejemplo: python main.py localhost:9092 DRV001\n")
         sys.exit(1)
 
     broker = sys.argv[1]
     driver_id = sys.argv[2]
-    
-    gui_mode = '--gui' in sys.argv or '-g' in sys.argv
 
-    driver = EVDriver(broker, driver_id, gui_mode=gui_mode)
+    driver = EVDriver(broker, driver_id)
     time.sleep(1)
     driver.start()
 
