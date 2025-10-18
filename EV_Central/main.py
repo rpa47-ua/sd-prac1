@@ -108,8 +108,9 @@ class EVCentral:
         self.kafka.registrar_callback('fin_suministro', self.logica.procesar_fin_suministro)
         self.kafka.registrar_callback('averias', self.logica.procesar_averia_cp)
         self.kafka.registrar_callback('recuperacion_cp', self.logica.procesar_recuperacion_cp)
+        self.kafka.registrar_callback('estado_cps', self.logica.procesar_solicitud_listado) # Mod
 
-        topics = ['solicitudes_suministro', 'telemetria_cp', 'fin_suministro', 'averias', 'recuperacion_cp']
+        topics = ['solicitudes_suministro', 'telemetria_cp', 'fin_suministro', 'averias', 'recuperacion_cp', 'estado_cps']
         self.kafka.suscribirse(topics)
 
         # 8. Iniciar panel de monitorizacion GUI

@@ -4,7 +4,8 @@ Contiene las reglas y validaciones del sistema
 """
 import time
 import threading
-
+from database import Database
+from kafka_handler import KafkaHandler
 
 class LogicaNegocio:
     def __init__(self, db, kafka_handler, servidor_socket=None):
@@ -15,33 +16,43 @@ class LogicaNegocio:
         self.colas_espera = {}
         self.running = True
 
-        threading.Thread(target=self._publicar_estados_periodicamente, daemon=True).start()
-
     def _publicar_estado_cp(self, cp_id: str, estado: str):
-        """
-        Publica el estado de un CP en el topic estado_cps para que los drivers lo vean en tiempo real
-        """
-        self.kafka.enviar_mensaje('estado_cps', {
-            'cp_id': cp_id,
-            'estado': estado
-        })
-        time.sleep(0.1)
+        try:
+            self.kafka.enviar_mensaje('estado_cps', {
+                'tipo': 'ESTADO_CP',
+                'cp_id': cp_id,
+                'estado': estado
+            })
+        except Exception:
+            print("[ERROR] No se puede publicar el estado")
+        
+    
+    def procesar_solicitud_listado(self, mensaje: dict):
+        try:
+            tipo = mensaje.get('tipo')
+            
+            if tipo == 'SOLICITUD':
+                print(f"[SOLICITUD] Recibida solicitud de estados de todos los CPs")
+                self._publicar_estados_completos()
+                
+        except Exception:
+            print(f"[ERROR] Procesando solicitud de listado")
 
-    def _publicar_estados_periodicamente(self):
-        """
-        Publica el estado de todos los CPs cada 10 segundos para que los Drivers nuevos puedan verlos
-        """
-        time.sleep(5)
-        while self.running:
-            try:
-                cps = self.db.obtener_todos_los_cps()
-                for cp in cps:
-                    if cp['estado'] != 'desconectado':
-                        self._publicar_estado_cp(cp['id'], cp['estado'])
-            except Exception as e:
-                print(f"[ERROR] Error publicando estados periódicamente: {e}")
-
-            time.sleep(10)
+    def _publicar_estados_completos(self):
+        try:
+            cps = self.db.obtener_todos_los_cps()
+            print(f"[PUBLICACIÓN] Enviando estados completos de {len(cps)} CPs")
+            
+            for cp in cps:
+                self._publicar_estado_cp(cp['id'], cp['estado'])
+                time.sleep(0.05)
+                
+            print(f"[OK] Estados completos de todos los CPs publicados")
+            
+        except Exception:
+            print(f"[ERROR] Publicando estados completos")
+        
+    
 
     def autenticar_cp(self, cp_id: str) -> bool:
         """
