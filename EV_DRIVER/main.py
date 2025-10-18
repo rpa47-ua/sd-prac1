@@ -136,7 +136,7 @@ class EVDriver:
         while True:
             with self.lock:
                 if not self.charging:
-                    break
+                    return
                 cp = self.current_cp
                 consumption = self.current_consumption
                 price = self.current_price
@@ -144,7 +144,7 @@ class EVDriver:
             
             duration = int(time.time() - start_time)
             
-            if time.time() - last_data > 10:
+            if time.time() - last_data > 1:
                 print(f"\n[ERROR] No se reciben datos de telemetría del CP {cp}.\n"
                       f"[INFO] Finalizando suministro por inactividad...\n")
                 with self.lock:
