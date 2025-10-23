@@ -22,11 +22,36 @@ class EVDriver:
         self.lock = threading.Lock()
 
         self._init_kafka()
+        self._registrar_conductor()
 
         self.thread = threading.Thread(target=self._listen_kafka, daemon=True)
         self.thread.start()
 
-    ### KAFKA 
+    ### KAFKA
+
+    def _registrar_conductor(self):
+        """Registra el conductor en el sistema al iniciar"""
+        if self.producer:
+            try:
+                registro = {
+                    'tipo': 'CONECTAR',
+                    'conductor_id': self.driver_id
+                }
+                self.producer.send('registro_conductores', registro)
+                self.producer.flush()
+                time.sleep(3)
+                print(f"[REGISTRO] Conductor {self.driver_id} registrado en el sistema\n")
+
+                # Solicitar recuperación de suministro activo
+                recuperacion = {
+                    'tipo': 'RECUPERAR_SUMINISTRO',
+                    'conductor_id': self.driver_id
+                }
+                self.producer.send('registro_conductores', recuperacion)
+                self.producer.flush()
+                time.sleep(2)
+            except Exception as e:
+                print(f"[ERROR] No se pudo registrar el conductor: {e}\n")
 
     def _init_kafka(self):
         try:
@@ -344,16 +369,31 @@ class EVDriver:
 
     def end(self):
         print("\n[INFO] Cerrando aplicación...\n")
+
+        # Desregistrar conductor ANTES de cambiar running a False
+        if self.producer:
+            try:
+                desregistro = {
+                    'tipo': 'DESCONECTAR',
+                    'conductor_id': self.driver_id
+                }
+                self.producer.send('registro_conductores', desregistro)
+                self.producer.flush()
+                time.sleep(2)
+                print(f"[DESREGISTRO] Conductor {self.driver_id} desconectado del sistema\n")
+            except Exception as e:
+                print(f"[ERROR] No se pudo desregistrar el conductor: {e}\n")
+
         self.running = False
-        
+
         try:
             self.consumer.wakeup()
         except:
             pass
-            
+
         if self.thread.is_alive():
             self.thread.join(timeout=2)
-        
+
         try:
             if self.consumer:
                 self.consumer.close()

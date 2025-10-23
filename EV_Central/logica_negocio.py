@@ -97,11 +97,17 @@ class LogicaNegocio:
 
         print(f"\nProcesando solicitud [{origen}]: Conductor {conductor_id} -> CP {cp_id}")
 
-        # 1. Verificar que el conductor existe (si no, auto-registrar)
+        # 1. Verificar que el conductor existe y está conectado
         conductor = self.db.obtener_conductor(conductor_id)
         if not conductor:
-            print(f"Auto-registrando conductor {conductor_id}")
-            self.db.registrar_conductor(conductor_id)
+            print(f"[ERROR] Conductor {conductor_id} no registrado en el sistema")
+            self._enviar_respuesta_solicitud(conductor_id, cp_id, False, "Conductor no registrado", origen, None)
+            return
+
+        if not conductor.get('conectado', False):
+            print(f"[ERROR] Conductor {conductor_id} no está conectado")
+            self._enviar_respuesta_solicitud(conductor_id, cp_id, False, "Conductor no conectado", origen, None)
+            return
 
         # 2. Verificar que el CP existe
         cp = self.db.obtener_cp(cp_id)
@@ -377,6 +383,38 @@ class LogicaNegocio:
 
         # Volver a estado activado
         self.db.actualizar_estado_cp(cp_id, 'activado')
+
+    def procesar_registro_conductor(self, mensaje: dict):
+        """
+        Procesa registro/desregistro de conductores
+        Mensaje: {'tipo': 'CONECTAR'/'DESCONECTAR'/'RECUPERAR_SUMINISTRO', 'conductor_id': 'DRV001'}
+        """
+        tipo = mensaje.get('tipo')
+        conductor_id = mensaje.get('conductor_id')
+
+        if tipo == 'CONECTAR':
+            print(f"[REGISTRO] Conductor {conductor_id} conectado")
+            self.db.registrar_conductor(conductor_id, conectado=True)
+        elif tipo == 'DESCONECTAR':
+            print(f"[DESREGISTRO] Conductor {conductor_id} desconectado")
+            self.db.actualizar_estado_conductor(conductor_id, conectado=False)
+        elif tipo == 'RECUPERAR_SUMINISTRO':
+            print(f"[RECUPERACION] Buscando suministro activo para {conductor_id}")
+            # Buscar suministro activo del conductor
+            suministro = self.db.obtener_suministro_activo_conductor(conductor_id)
+            if suministro:
+                print(f"[RECUPERACION] Suministro activo encontrado (ID: {suministro['id']}, CP: {suministro['cp_id']})")
+                # Enviar información del suministro al conductor
+                self.kafka.enviar_mensaje('respuestas_conductor', {
+                    'conductor_id': conductor_id,
+                    'cp_id': suministro['cp_id'],
+                    'autorizado': True,
+                    'mensaje': 'Suministro activo recuperado',
+                    'suministro_id': suministro['id']
+                })
+                time.sleep(2)
+            else:
+                print(f"[RECUPERACION] No hay suministro activo para {conductor_id}")
 
     def procesar_estado_engine(self, cp_id: str, estado_engine: str):
         """

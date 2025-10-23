@@ -564,8 +564,9 @@ class EVDriverGUI:
             pass
         
     def _on_close(self):
+        self.driver.gui = None
+        self.driver.end()
         try:
             self.root.destroy()
         except:
             pass
-        self.driver.gui = None

@@ -95,15 +95,27 @@ class Database:
             print(f"Error obteniendo conductor: {e}")
             return None
 
-    def registrar_conductor(self, conductor_id: str):
-        """Registra un conductor en BBDD (solo ID para recuperación de estado)"""
+    def registrar_conductor(self, conductor_id: str, conectado: bool = True):
+        """Registra un conductor en BBDD"""
         try:
             with self.connection.cursor() as cursor:
-                sql = """INSERT IGNORE INTO conductores (id) VALUES (%s)"""
-                cursor.execute(sql, (conductor_id,))
+                sql = """INSERT INTO conductores (id, conectado) VALUES (%s, %s)
+                         ON DUPLICATE KEY UPDATE conectado = %s"""
+                cursor.execute(sql, (conductor_id, conectado, conectado))
                 return True
         except Exception as e:
             print(f"Error registrando conductor: {e}")
+            return False
+
+    def actualizar_estado_conductor(self, conductor_id: str, conectado: bool):
+        """Actualiza el estado de conexión de un conductor"""
+        try:
+            self._verificar_conexion()
+            with self.connection.cursor() as cursor:
+                cursor.execute("UPDATE conductores SET conectado = %s WHERE id = %s", (conectado, conductor_id))
+                return True
+        except Exception as e:
+            print(f"Error actualizando estado conductor: {e}")
             return False
 
     def crear_suministro(self, conductor_id: str, cp_id: str) -> Optional[int]:
@@ -149,6 +161,18 @@ class Database:
                 return cursor.fetchone()
         except Exception as e:
             print(f"Error obteniendo suministro: {e}")
+            return None
+
+    def obtener_suministro_activo_conductor(self, conductor_id: str) -> Optional[Dict]:
+        """Obtiene el suministro activo de un conductor específico"""
+        try:
+            self._verificar_conexion()
+            with self.connection.cursor() as cursor:
+                cursor.execute("""SELECT * FROM suministros WHERE conductor_id = %s AND estado IN ('autorizado', 'en_curso')
+                                 ORDER BY fecha_inicio DESC LIMIT 1""", (conductor_id,))
+                return cursor.fetchone()
+        except Exception as e:
+            print(f"Error obteniendo suministro activo conductor: {e}")
             return None
 
     def obtener_suministros_activos(self) -> List[Dict]:

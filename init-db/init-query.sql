@@ -9,6 +9,7 @@ DROP TABLE IF EXISTS conductores;
 -- Tabla de Conductores (mínima - solo ID para tickets y recuperación)
 CREATE TABLE conductores (
     id VARCHAR(50) PRIMARY KEY,
+    conectado BOOLEAN DEFAULT FALSE,
     fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 

@@ -1,7 +1,7 @@
 # Dependencias para el proyecto EVCharging
 
 # Kafka
-kafka-python==2.0.2 (2.2.0)
+kafka-python== 2.2.0
 
 # Base de datos
 pymysql==1.1.0

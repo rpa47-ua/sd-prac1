@@ -38,6 +38,8 @@ class PanelGUI:
         self.root.geometry("1200x700")
         self.root.configure(bg=self.COLORS['bg_main'])
 
+        self.root.protocol("WM_DELETE_WINDOW", self._confirmar_cierre)
+
         self._crear_interfaz()
 
         # Actualizar datos cada 2 segundos
@@ -393,6 +395,11 @@ class PanelGUI:
         if messagebox.askyesno("Confirmar", mensaje):
             self.logica.reanudar_todos_cps()
             self._actualizar_datos()
+
+    def _confirmar_cierre(self):
+        """Confirma antes de cerrar la aplicación"""
+        if messagebox.askyesno("Confirmar cierre", "¿Estás seguro de que quieres cerrar el panel de control?"):
+            self.detener()
 
     def detener(self):
         """Detiene el panel GUI"""
