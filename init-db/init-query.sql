@@ -30,6 +30,7 @@ CREATE TABLE suministros (
     consumo_kwh DECIMAL(8, 3) DEFAULT 0.000,
     importe_total DECIMAL(10, 2) DEFAULT 0.00,
     estado VARCHAR(20) DEFAULT 'solicitado',
+    ticket_enviado BOOLEAN DEFAULT FALSE,
     FOREIGN KEY (conductor_id) REFERENCES conductores(id),
     FOREIGN KEY (cp_id) REFERENCES charging_points(id)
 ) ENGINE=InnoDB;

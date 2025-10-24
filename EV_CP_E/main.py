@@ -72,7 +72,7 @@ class EVChargingPointEngine:
                 enable_auto_commit=True
             )
 
-            self.consumer.subscribe(['respuestas_cp', 'respuestas_conductor'])
+            self.consumer.subscribe(['respuestas_cp', 'respuestas_conductor', 'solicitud_estado_engine'])
             self._log("OK", f"Conectado a Kafka en {self.broker}")
         except Exception:
             self._log("ERROR", "No se pudo establecer conexión con Kafka. Verifique el broker o la red.")
@@ -106,7 +106,9 @@ class EVChargingPointEngine:
                 for tp, msgs in records.items():
                     for msg in msgs:
                         kmsg = msg.value
-                        if msg.topic in ['respuestas_cp', 'respuestas_conductor'] and kmsg.get('cp_id') == self.cp_id:
+                        if msg.topic == 'solicitud_estado_engine':
+                            self._handle_estado_solicitud(kmsg)
+                        elif msg.topic in ['respuestas_cp', 'respuestas_conductor'] and kmsg.get('cp_id') == self.cp_id:
                             self._handle_authorization_response(kmsg)
             except Exception:
                 self._log("ERROR", "Error al recibir mensajes de Kafka.")
@@ -168,6 +170,37 @@ class EVChargingPointEngine:
                     time.sleep(1)
 
     ### SUMINISTRO Y FUNCIONALIDADES
+
+    def _handle_estado_solicitud(self, kmsg):
+        """Responde a solicitud de Central con el estado actual del suministro"""
+        if kmsg.get('tipo') == 'SOLICITAR_ESTADO':
+            with self.lock:
+                if self.charging and self.current_driver and self.current_supply_id:
+                    # Calcular estado actual
+                    consumo = self.kWH
+                    importe = consumo * self.price
+
+                    respuesta = {
+                        'cp_id': self.cp_id,
+                        'activo': True,
+                        'conductor_id': self.current_driver,
+                        'suministro_id': self.current_supply_id,
+                        'consumo_actual': round(consumo, 3),
+                        'importe_actual': round(importe, 2)
+                    }
+                    self._log("INFO", f"Enviando estado de suministro activo a Central")
+                else:
+                    respuesta = {
+                        'cp_id': self.cp_id,
+                        'activo': False
+                    }
+                    self._log("INFO", f"No hay suministro activo para reportar")
+
+                try:
+                    self.producer.send('respuesta_estado_engine', respuesta)
+                    self.producer.flush()
+                except Exception:
+                    self._log("ERROR", "No se pudo enviar respuesta de estado")
 
     def _handle_authorization_response(self, kmsg):
         if kmsg.get('autorizado', False):

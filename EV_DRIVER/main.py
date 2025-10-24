@@ -140,13 +140,17 @@ class EVDriver:
             print("\n[ERROR] No se pudo enviar la solicitud al broker Kafka.\n")
 
     def _file_process(self, original_file):
+        # Esperar a que el registro esté completo
+        print("\n[INFO] Verificando registro del conductor...\n")
+        time.sleep(3)
+
         try:
             with open(original_file, 'r') as file:
                 requests = [line.strip() for line in file if line.strip()]
         except FileNotFoundError:
             print(f"\n[ERROR] No se encontró el archivo {original_file}. Verifique el nombre o la ruta.\n")
             return
-        
+
         for i, cp_id in enumerate(requests, 1):
             print(f"\n--- Procesando solicitud {i}/{len(requests)} ---\n")
             self._send_charging_request(cp_id)

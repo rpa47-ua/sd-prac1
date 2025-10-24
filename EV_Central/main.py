@@ -98,7 +98,7 @@ class EVCentral:
             'solicitudes_suministro', 'respuestas_conductor', 'respuestas_cp',
             'comandos_cp', 'telemetria_cp', 'fin_suministro', 'averias',
             'recuperacion_cp', 'tickets', 'notificaciones', 'estado_cps',
-            'registro_conductores'
+            'registro_conductores', 'solicitud_estado_engine', 'respuesta_estado_engine'
         ]
         self.kafka.crear_topics_si_no_existen(all_topics)
 
@@ -111,11 +111,16 @@ class EVCentral:
         self.kafka.registrar_callback('recuperacion_cp', self.logica.procesar_recuperacion_cp)
         self.kafka.registrar_callback('estado_cps', self.logica.procesar_solicitud_listado)
         self.kafka.registrar_callback('registro_conductores', self.logica.procesar_registro_conductor)
+        self.kafka.registrar_callback('respuesta_estado_engine', self.logica.procesar_respuesta_estado_engine)
 
-        topics = ['solicitudes_suministro', 'telemetria_cp', 'fin_suministro', 'averias', 'recuperacion_cp', 'estado_cps', 'registro_conductores']
+        topics = ['solicitudes_suministro', 'telemetria_cp', 'fin_suministro', 'averias', 'recuperacion_cp', 'estado_cps', 'registro_conductores', 'respuesta_estado_engine']
         self.kafka.suscribirse(topics)
 
-        # 8. Iniciar panel de monitorizacion GUI
+        # 8. Recuperar suministros activos y enviar tickets pendientes
+        print("\nRecuperando suministros del sistema...")
+        self.logica.recuperar_suministros_al_inicio()
+
+        # 9. Iniciar panel de monitorizacion GUI
         print("\nInicializando panel de monitorizacion GUI...")
         self.panel = PanelGUI(self.logica)
 

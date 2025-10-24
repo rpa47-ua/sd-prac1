@@ -198,3 +198,37 @@ class Database:
         except Exception as e:
             print(f"Error marcando CPs como desconectados: {e}")
             return False
+
+    def obtener_suministros_pendientes_ticket(self) -> List[Dict]:
+        """Obtiene suministros finalizados sin ticket enviado"""
+        try:
+            self._verificar_conexion()
+            with self.connection.cursor() as cursor:
+                # Verificar si la columna ticket_enviado existe
+                cursor.execute("SHOW COLUMNS FROM suministros LIKE 'ticket_enviado'")
+                if cursor.fetchone():
+                    cursor.execute("""SELECT * FROM suministros
+                                     WHERE estado = 'completado' AND ticket_enviado = FALSE
+                                     ORDER BY fecha_fin DESC""")
+                    return cursor.fetchall()
+                else:
+                    # Si no existe la columna, asumir que ningún ticket ha sido enviado
+                    print("[INFO] Columna ticket_enviado no existe. Recrear BD con nuevo schema.")
+                    return []
+        except Exception as e:
+            print(f"Error obteniendo suministros pendientes de ticket: {e}")
+            return []
+
+    def marcar_ticket_enviado(self, suministro_id: int):
+        """Marca un suministro como ticket enviado"""
+        try:
+            self._verificar_conexion()
+            with self.connection.cursor() as cursor:
+                # Verificar si la columna existe antes de actualizar
+                cursor.execute("SHOW COLUMNS FROM suministros LIKE 'ticket_enviado'")
+                if cursor.fetchone():
+                    cursor.execute("UPDATE suministros SET ticket_enviado = TRUE WHERE id = %s", (suministro_id,))
+                return True
+        except Exception as e:
+            print(f"Error marcando ticket como enviado: {e}")
+            return False
