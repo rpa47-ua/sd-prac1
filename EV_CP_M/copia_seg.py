@@ -26,14 +26,12 @@ def recv(conn):
     return None
 
 class EVChargingPointMonitor:
-    def __init__(self, engine_ip, engine_port, central_ip, central_port, cp_id, gui_mode=False):
+    def __init__(self, engine_ip, engine_port, central_ip, central_port, cp_id):
         self.engine_ip = engine_ip
         self.engine_port = int(engine_port)
         self.central_ip = central_ip
         self.central_port = int(central_port)
         self.cp_id = cp_id
-        self.gui_mode = gui_mode
-        self.gui = None
 
         self.last_status = None
         self.running = True
@@ -44,18 +42,10 @@ class EVChargingPointMonitor:
         
         self.lock = threading.Lock()
 
-    def _log(self, message):
-        print(message)
-        if self.gui_mode and self.gui and hasattr(self.gui, 'log_message'):
-            try:
-                if hasattr(self.gui, 'root') and self.gui.root.winfo_exists():
-                    self.gui.root.after(0, lambda msg=message: self.gui.log_message(msg))
-            except:
-                pass
-
     ### CENTRAL
 
     def _connect_central(self):
+        """Conexión inicial a la CENTRAL"""
         while self.running and not self.central_client:
             try:
                 self.central_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -63,17 +53,17 @@ class EVChargingPointMonitor:
                 self.central_client.connect((self.central_ip, self.central_port))
                 auth_msg = json.dumps({'tipo': 'AUTENTICACION', 'cp_id': self.cp_id})
                 self.central_client.send(auth_msg.encode(FORMAT))
-                self._log(f"[MONITOR] Conectado a CENTRAL {self.central_ip}:{self.central_port}")
+                print(f"[MONITOR] Conectado a CENTRAL {self.central_ip}:{self.central_port}")
                 threading.Thread(target=self._listen_central, daemon=True).start()
 
                 if self.last_status:
                     msg = json.dumps({'tipo': self.last_status, 'cp_id': self.cp_id})
                     self.central_client.send(msg.encode(FORMAT))
-                    self._log(f"[CENTRAL] Estado actual '{self.last_status}' enviado tras conexión inicial")
+                    print(f"[CENTRAL] Estado actual '{self.last_status}' enviado tras conexión inicial")
 
                 return True
             except Exception:
-                self._log(f"[ERROR] No se pudo conectar a CENTRAL, reintentando en 3 segundos...")
+                print(f"[ERROR] No se pudo conectar a CENTRAL, reintentando en 3 segundos...")
                 try:
                     if self.central_client:
                         self.central_client.close()
@@ -83,6 +73,7 @@ class EVChargingPointMonitor:
         return False
 
     def _central_reconnect_loop(self):
+        """Hilo que intenta reconectar a CENTRAL constantemente"""
         while self.running:
             if not self.central_client:
                 try:
@@ -91,16 +82,16 @@ class EVChargingPointMonitor:
                     self.central_client.connect((self.central_ip, self.central_port))
                     auth_msg = json.dumps({'tipo': 'AUTENTICACION', 'cp_id': self.cp_id})
                     self.central_client.send(auth_msg.encode(FORMAT))
-                    self._log(f"[MONITOR] Reconectado a CENTRAL {self.central_ip}:{self.central_port}")
+                    print(f"[MONITOR] Reconectado a CENTRAL {self.central_ip}:{self.central_port}")
                     threading.Thread(target=self._listen_central, daemon=True).start()
 
                     if self.last_status:
                         msg = json.dumps({'tipo': self.last_status, 'cp_id': self.cp_id})
                         self.central_client.send(msg.encode(FORMAT))
-                        self._log(f"[CENTRAL] Estado actual '{self.last_status}' enviado tras reconexión")
+                        print(f"[CENTRAL] Estado actual '{self.last_status}' enviado tras reconexión")
 
                 except Exception:
-                    self._log(f"[ERROR] No se pudo reconectar a CENTRAL, reintentando en 3 segundos...")
+                    print(f"[ERROR] No se pudo reconectar a CENTRAL, reintentando en 3 segundos...")
                     try:
                         if self.central_client:
                             self.central_client.close()
@@ -115,22 +106,22 @@ class EVChargingPointMonitor:
             try:
                 msg = json.dumps({'tipo': state, 'cp_id': self.cp_id})
                 self.central_client.send(msg.encode(FORMAT))
-                self._log(f"[CENTRAL] Estado '{state}' enviado")
+                print(f"[CENTRAL] Estado '{state}' enviado")
             except Exception as e:
-                self._log(f"[ERROR] Al notificar a CENTRAL: {e}")
+                print(f"[ERROR] Al notificar a CENTRAL: {e}")
                 try:
                     self.central_client.close()
                 except: pass
                 self.central_client = None
 
     def _listen_central(self):
-        self._log("[MONITOR] Escuchando comandos de la CENTRAL...")
+        print("[MONITOR] Escuchando comandos de la CENTRAL...")
         while self.running and self.central_client:
             try:
                 self.central_client.settimeout(2.0)
                 data = self.central_client.recv(4096)
                 if not data:
-                    self._log("[MONITOR] CENTRAL cerró la conexión")
+                    print("[MONITOR] CENTRAL cerró la conexión")
                     break
                 try:
                     mensaje = json.loads(data.decode(FORMAT))
@@ -138,10 +129,10 @@ class EVChargingPointMonitor:
                     with self.lock:
                         if tipo == 'PARAR':
                             self.manually_stopped = True
-                            self._log("[CENTRAL] Comando: PARAR recibido, CP detenido manualmente")
+                            print("[CENTRAL] Comando: PARAR recibido, CP detenido manualmente")
                         elif tipo == 'REANUDAR':
                             self.manually_stopped = False
-                            self._log("[CENTRAL] Comando: REANUDAR recibido, CP activo")
+                            print("[CENTRAL] Comando: REANUDAR recibido, CP activo")
                         self.last_status = None
                 except json.JSONDecodeError:
                     pass
@@ -149,16 +140,16 @@ class EVChargingPointMonitor:
                 continue
             except Exception as e:
                 if self.running:
-                    self._log(f"[ERROR] Escuchando comandos de CENTRAL: {e}")
+                    print(f"[ERROR] Escuchando comandos de CENTRAL: {e}")
                 break
-        self._log("[MONITOR] Dejó de escuchar comandos de la CENTRAL")
+        print("[MONITOR] Dejó de escuchar comandos de la CENTRAL")
         if self.central_client:
             try:
                 self.central_client.close()
             except:
                 pass
             self.central_client = None
-            self._log("[MONITOR] Conexión con CENTRAL cerrada")
+            print("[MONITOR] Conexión con CENTRAL cerrada")
 
     ### ENGINE
 
@@ -168,15 +159,15 @@ class EVChargingPointMonitor:
                 self.engine_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 self.engine_client.settimeout(5)
                 self.engine_client.connect((self.engine_ip, self.engine_port))
-                self._log(f"[MONITOR] Conectado a ENGINE {self.engine_ip}:{self.engine_port}")
+                print(f"[MONITOR] Conectado a ENGINE {self.engine_ip}:{self.engine_port}")
                 return True
             except Exception as e:
-                self._log(f"[ERROR] No se pudo conectar a ENGINE: {e}")
+                print(f"[ERROR] No se pudo conectar a ENGINE: {e}")
                 time.sleep(2)
         return False
 
     def _check_engine_status(self):
-        self._log("[MONITOR] Comenzando monitoreo del Engine...")
+        print("[MONITOR] Comenzando monitoreo del Engine...")
         while self.running:
             if not self.engine_client:
                 if not self._connect_engine():
@@ -199,17 +190,16 @@ class EVChargingPointMonitor:
 
                     if self.last_status != estado:
                         prev_status = self.last_status or "NINGUNO"
-                        self._log(f"[MONITOR] Cambio de estado: {prev_status} -> {estado}")
+                        print(f"[MONITOR] Cambio de estado: {prev_status} -> {estado}")
                         self.last_status = estado
                         self._notify_central(estado)
                     else:
-                        if not self.gui_mode:
-                            self._log(f"[MONITOR] Estado actual: {estado}")
+                        print(f"[MONITOR] Estado actual: {estado}")
 
                 time.sleep(1)
 
             except (socket.error, ConnectionResetError):
-                self._log("[ERROR] Comunicación con Engine perdida, reconectando...")
+                print("[ERROR] Comunicación con Engine perdida, reconectando...")
                 if self.engine_client:
                     try: self.engine_client.close()
                     except: pass
@@ -221,12 +211,12 @@ class EVChargingPointMonitor:
                         self._notify_central(estado)
                 time.sleep(2)
             except Exception as e:
-                self._log(f"[ERROR] Chequeo Engine: {e}")
+                print(f"[ERROR] Chequeo Engine: {e}")
 
     ### MONITOR
 
     def _cleanup(self):
-        self._log("\n[MONITOR] Cerrando conexiones...")
+        print("\n[MONITOR] Cerrando conexiones...")
         self.running = False
         if self.engine_client:
             try: self.engine_client.close()
@@ -234,44 +224,9 @@ class EVChargingPointMonitor:
         if self.central_client:
             try: self.central_client.close()
             except: pass
-        self._log("[MONITOR] Aplicación finalizada correctamente")
+        print("[MONITOR] Aplicación finalizada correctamente")
 
     def start(self):
-        if self.gui_mode:
-            self._start_with_gui()
-        else:
-            self._start_cli()
-
-    def _start_with_gui(self):
-        try:
-            from gui import EVMonitorGUI
-            self.gui = EVMonitorGUI(self)
-
-            self._connect_central()
-            self._connect_engine()
-            
-            threading.Thread(target=self._central_reconnect_loop, daemon=True).start()
-            threading.Thread(target=self._check_engine_status, daemon=True).start()
-
-            try:
-                self.gui.run()
-            except:
-                pass
-            finally:
-                self._cleanup()
-                
-        except ImportError:
-            print("\n[ERROR] No se pudo importar el módulo GUI. Asegúrese de que monitor_gui.py existe.")
-            print("[INFO] Cambiando a modo CLI...\n")
-            self.gui_mode = False
-            self._start_cli()
-        except Exception as e:
-            print(f"\n[ERROR] Error al iniciar GUI: {e}")
-            print("[INFO] Cambiando a modo CLI...\n")
-            self.gui_mode = False
-            self._start_cli()
-
-    def _start_cli(self):
         print(f"=== Monitor del Punto de Carga: {self.cp_id} ===\n")
         
         self._connect_central()
@@ -290,18 +245,15 @@ class EVChargingPointMonitor:
 
 def main():
     if len(sys.argv) < 4:
-        print("Uso: python main.py [ip_engine:port_engine] [ip_central:port_central] <cp_id> [--gui]")
-        print("Ejemplo CLI: python main.py localhost:5050 localhost:5000 CP001")
-        print("Ejemplo GUI: python main.py localhost:5050 localhost:5000 CP001 --gui")
+        print("Uso: python main.py [ip_engine:port_engine] [ip_central:port_central] <cp_id>")
+        print("Ejemplo: python main.py localhost:5050 localhost:5000 CP001")
         sys.exit(1)
 
     engine_ip, engine_port = sys.argv[1].split(':')
     central_ip, central_port = sys.argv[2].split(':')
     cp_id = sys.argv[3]
-    
-    gui_mode = '--gui' in sys.argv or '-g' in sys.argv
 
-    monitor = EVChargingPointMonitor(engine_ip, engine_port, central_ip, central_port, cp_id, gui_mode=gui_mode)
+    monitor = EVChargingPointMonitor(engine_ip, engine_port, central_ip, central_port, cp_id)
     monitor.start()
 
 if __name__ == "__main__":
