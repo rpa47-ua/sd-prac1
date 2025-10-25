@@ -8,7 +8,7 @@ class EVChargingGUI:
         self.root = tk.Tk()
         self.root.title(f"Sistema de Gestión - Punto de Carga {engine.cp_id}")
         self.root.geometry("1400x800")
-        self.root.minsize(1200, 700)
+        self.root.minsize(1000, 600)  # Tamaño mínimo más razonable
         self.root.resizable(True, True)
 
         self.bg_dark = "#1a1d2e"
@@ -28,21 +28,30 @@ class EVChargingGUI:
         self.border = "#3a3d5c"
         
         self.root.configure(bg=self.bg_dark)
+        
+        # Grid weights para resize
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
+        
         self._create_widgets()
         self._start_update_loop()
         
     def _create_widgets(self):
         main_container = tk.Frame(self.root, bg=self.bg_dark)
-        main_container.pack(fill=tk.BOTH, expand=True)
+        main_container.grid(row=0, column=0, sticky="nsew")
+        main_container.grid_rowconfigure(0, weight=1)
+        main_container.grid_columnconfigure(1, weight=1)
 
         sidebar = tk.Frame(main_container, bg=self.bg_medium, width=250)
-        sidebar.pack(side=tk.LEFT, fill=tk.Y)
-        sidebar.pack_propagate(False)
+        sidebar.grid(row=0, column=0, sticky="ns")
+        sidebar.grid_propagate(False)
         
         self._create_sidebar(sidebar)
 
         content = tk.Frame(main_container, bg=self.bg_dark)
-        content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        content.grid(row=0, column=1, sticky="nsew")
+        content.grid_rowconfigure(1, weight=1)
+        content.grid_columnconfigure(0, weight=1)
         
         self._create_content(content)
         
@@ -149,43 +158,44 @@ class EVChargingGUI:
         setattr(self, var_name, value_label)
         
     def _create_content(self, parent):
-        header = tk.Frame(parent, bg=self.bg_dark, height=80)
-        header.pack(fill=tk.X, padx=30, pady=(20, 0))
-        header.pack_propagate(False)
-        
-        header_content = tk.Frame(header, bg=self.bg_dark)
-        header_content.pack(fill=tk.BOTH, expand=True, pady=10)
+        header = tk.Frame(parent, bg=self.bg_dark)
+        header.grid(row=0, column=0, sticky="ew", padx=30, pady=(20, 0))
         
         tk.Label(
-            header_content,
+            header,
             text="Panel de Control",
             font=("Segoe UI", 24, "bold"),
             bg=self.bg_dark,
             fg=self.text_primary
-        ).pack(side=tk.LEFT)
+        ).pack(side=tk.LEFT, pady=10)
 
         content_scroll = tk.Frame(parent, bg=self.bg_dark)
-        content_scroll.pack(fill=tk.BOTH, expand=True, padx=30, pady=20)
+        content_scroll.grid(row=1, column=0, sticky="nsew", padx=30, pady=20)
+        content_scroll.grid_rowconfigure(1, weight=1)
+        content_scroll.grid_columnconfigure(0, weight=1)
+        content_scroll.grid_columnconfigure(1, weight=1)
 
         top_row = tk.Frame(content_scroll, bg=self.bg_dark)
-        top_row.pack(fill=tk.X, pady=(0, 20))
+        top_row.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 20))
         
         self._create_metric_cards(top_row)
 
-        bottom_row = tk.Frame(content_scroll, bg=self.bg_dark)
-        bottom_row.pack(fill=tk.BOTH, expand=True)
-
-        left_panel = tk.Frame(bottom_row, bg=self.bg_dark)
-        left_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+        left_panel = tk.Frame(content_scroll, bg=self.bg_dark)
+        left_panel.grid(row=1, column=0, sticky="nsew", padx=(0, 10))
         
         self._create_supply_control_card(left_panel)
 
-        right_panel = tk.Frame(bottom_row, bg=self.bg_dark)
-        right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(10, 0))
+        right_panel = tk.Frame(content_scroll, bg=self.bg_dark)
+        right_panel.grid(row=1, column=1, sticky="nsew", padx=(10, 0))
         
         self._create_maintenance_card(right_panel)
         
     def _create_metric_cards(self, parent):
+        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_columnconfigure(1, weight=1)
+        parent.grid_columnconfigure(2, weight=1)
+        parent.grid_columnconfigure(3, weight=1)
+        
         metrics = [
             ("Consumo", "0.00", "kWh", "consumption_metric", self.accent_cyan),
             ("Importe", "0.00", "EUR", "price_metric", self.accent_blue),
@@ -195,7 +205,7 @@ class EVChargingGUI:
         
         for i, (label, value, unit, var_name, color) in enumerate(metrics):
             card = self._create_gradient_metric_card(parent, label, value, unit, color)
-            card.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 15) if i < 3 else (0, 0))
+            card.grid(row=0, column=i, sticky="nsew", padx=(0, 15) if i < 3 else (0, 0))
             
     def _create_gradient_metric_card(self, parent, label, value, unit, color):
         card = tk.Frame(parent, bg=self.bg_card)
@@ -556,8 +566,9 @@ class EVChargingGUI:
             pass
         
     def _on_close(self):
+        self.engine.gui = None
+        self.engine.end()
         try:
             self.root.destroy()
         except:
             pass
-        self.engine.gui = None

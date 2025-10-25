@@ -8,7 +8,7 @@ class EVMonitorGUI:
         self.root = tk.Tk()
         self.root.title(f"Monitor - Punto de Carga {monitor.cp_id}")
         self.root.geometry("1200x700")
-        self.root.minsize(1000, 600)
+        self.root.minsize(900, 550)  # Tamaño mínimo más razonable
         self.root.resizable(True, True)
 
         self.bg_dark = "#1a1d2e"
@@ -29,21 +29,30 @@ class EVMonitorGUI:
         
         self.root.configure(bg=self.bg_dark)
         self.log_messages = []
+        
+        # Grid weights para resize
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
+        
         self._create_widgets()
         self._start_update_loop()
         
     def _create_widgets(self):
         main_container = tk.Frame(self.root, bg=self.bg_dark)
-        main_container.pack(fill=tk.BOTH, expand=True)
+        main_container.grid(row=0, column=0, sticky="nsew")
+        main_container.grid_rowconfigure(0, weight=1)
+        main_container.grid_columnconfigure(1, weight=1)
 
         sidebar = tk.Frame(main_container, bg=self.bg_medium, width=250)
-        sidebar.pack(side=tk.LEFT, fill=tk.Y)
-        sidebar.pack_propagate(False)
+        sidebar.grid(row=0, column=0, sticky="ns")
+        sidebar.grid_propagate(False)
         
         self._create_sidebar(sidebar)
 
         content = tk.Frame(main_container, bg=self.bg_dark)
-        content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        content.grid(row=0, column=1, sticky="nsew")
+        content.grid_rowconfigure(1, weight=1)
+        content.grid_columnconfigure(0, weight=1)
         
         self._create_content(content)
         
@@ -159,37 +168,39 @@ class EVMonitorGUI:
         setattr(self, var_name, value_label)
         
     def _create_content(self, parent):
-        header = tk.Frame(parent, bg=self.bg_dark, height=80)
-        header.pack(fill=tk.X, padx=30, pady=(20, 0))
-        header.pack_propagate(False)
-        
-        header_content = tk.Frame(header, bg=self.bg_dark)
-        header_content.pack(fill=tk.BOTH, expand=True, pady=10)
+        header = tk.Frame(parent, bg=self.bg_dark)
+        header.grid(row=0, column=0, sticky="ew", padx=30, pady=(20, 0))
         
         tk.Label(
-            header_content,
+            header,
             text="Panel de Monitoreo",
             font=("Segoe UI", 24, "bold"),
             bg=self.bg_dark,
             fg=self.text_primary
-        ).pack(side=tk.LEFT)
+        ).pack(side=tk.LEFT, pady=10)
         
         content_scroll = tk.Frame(parent, bg=self.bg_dark)
-        content_scroll.pack(fill=tk.BOTH, expand=True, padx=30, pady=20)
+        content_scroll.grid(row=1, column=0, sticky="nsew", padx=30, pady=20)
+        content_scroll.grid_rowconfigure(1, weight=1)
+        content_scroll.grid_columnconfigure(0, weight=1)
+        content_scroll.grid_columnconfigure(1, weight=1)
         
         top_row = tk.Frame(content_scroll, bg=self.bg_dark)
-        top_row.pack(fill=tk.X, pady=(0, 20))
+        top_row.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 20))
         
         self._create_connection_cards(top_row)
 
         bottom_row = tk.Frame(content_scroll, bg=self.bg_dark)
-        bottom_row.pack(fill=tk.BOTH, expand=True)
+        bottom_row.grid(row=1, column=0, columnspan=2, sticky="nsew")
         
         self._create_log_card(bottom_row)
         
     def _create_connection_cards(self, parent):
+        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_columnconfigure(1, weight=1)
+        
         engine_card = tk.Frame(parent, bg=self.bg_card)
-        engine_card.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+        engine_card.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
         
         engine_content = tk.Frame(engine_card, bg=self.bg_card)
         engine_content.pack(fill=tk.BOTH, expand=True, padx=25, pady=20)
@@ -236,7 +247,7 @@ class EVMonitorGUI:
         self.engine_address.pack(anchor=tk.W)
 
         central_card = tk.Frame(parent, bg=self.bg_card)
-        central_card.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0))
+        central_card.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
         
         central_content = tk.Frame(central_card, bg=self.bg_card)
         central_content.pack(fill=tk.BOTH, expand=True, padx=25, pady=20)
@@ -454,8 +465,9 @@ class EVMonitorGUI:
             pass
         
     def _on_close(self):
+        self.monitor.gui = None
+        self.monitor._cleanup()
         try:
             self.root.destroy()
         except:
             pass
-        self.monitor.gui = None

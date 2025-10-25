@@ -8,7 +8,7 @@ class EVDriverGUI:
         self.root = tk.Tk()
         self.root.title(f"Sistema de Conductor - {driver.driver_id}")
         self.root.geometry("1400x800")
-        self.root.minsize(1200, 700)
+        self.root.minsize(1000, 600)  # Tamaño mínimo más razonable
         self.root.resizable(True, True)
         
         self.bg_dark = "#1a1d2e"
@@ -28,21 +28,30 @@ class EVDriverGUI:
         self.border = "#3a3d5c"
         
         self.root.configure(bg=self.bg_dark)
+        
+        # Grid weights para resize
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
+        
         self._create_widgets()
         self._start_update_loop()
         
     def _create_widgets(self):
         main_container = tk.Frame(self.root, bg=self.bg_dark)
-        main_container.pack(fill=tk.BOTH, expand=True)
+        main_container.grid(row=0, column=0, sticky="nsew")
+        main_container.grid_rowconfigure(0, weight=1)
+        main_container.grid_columnconfigure(1, weight=1)
 
         sidebar = tk.Frame(main_container, bg=self.bg_medium, width=250)
-        sidebar.pack(side=tk.LEFT, fill=tk.Y)
-        sidebar.pack_propagate(False)
+        sidebar.grid(row=0, column=0, sticky="ns")
+        sidebar.grid_propagate(False)
         
         self._create_sidebar(sidebar)
 
         content = tk.Frame(main_container, bg=self.bg_dark)
-        content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        content.grid(row=0, column=1, sticky="nsew")
+        content.grid_rowconfigure(1, weight=1)
+        content.grid_columnconfigure(0, weight=1)
         
         self._create_content(content)
         
@@ -148,43 +157,44 @@ class EVDriverGUI:
         setattr(self, var_name, value_label)
         
     def _create_content(self, parent):
-        header = tk.Frame(parent, bg=self.bg_dark, height=80)
-        header.pack(fill=tk.X, padx=30, pady=(20, 0))
-        header.pack_propagate(False)
-        
-        header_content = tk.Frame(header, bg=self.bg_dark)
-        header_content.pack(fill=tk.BOTH, expand=True, pady=10)
+        header = tk.Frame(parent, bg=self.bg_dark)
+        header.grid(row=0, column=0, sticky="ew", padx=30, pady=(20, 0))
         
         tk.Label(
-            header_content,
+            header,
             text="Panel de Conductor",
             font=("Segoe UI", 24, "bold"),
             bg=self.bg_dark,
             fg=self.text_primary
-        ).pack(side=tk.LEFT)
+        ).pack(side=tk.LEFT, pady=10)
 
         content_scroll = tk.Frame(parent, bg=self.bg_dark)
-        content_scroll.pack(fill=tk.BOTH, expand=True, padx=30, pady=20)
+        content_scroll.grid(row=1, column=0, sticky="nsew", padx=30, pady=20)
+        content_scroll.grid_rowconfigure(1, weight=1)
+        content_scroll.grid_columnconfigure(0, weight=1)
+        content_scroll.grid_columnconfigure(1, weight=1)
 
         top_row = tk.Frame(content_scroll, bg=self.bg_dark)
-        top_row.pack(fill=tk.X, pady=(0, 20))
+        top_row.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 20))
         
         self._create_metric_cards(top_row)
- 
-        bottom_row = tk.Frame(content_scroll, bg=self.bg_dark)
-        bottom_row.pack(fill=tk.BOTH, expand=True)
 
-        left_panel = tk.Frame(bottom_row, bg=self.bg_dark)
-        left_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+        left_panel = tk.Frame(content_scroll, bg=self.bg_dark)
+        left_panel.grid(row=1, column=0, sticky="nsew", padx=(0, 10))
         
         self._create_charging_control_card(left_panel)
 
-        right_panel = tk.Frame(bottom_row, bg=self.bg_dark)
-        right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(10, 0))
+        right_panel = tk.Frame(content_scroll, bg=self.bg_dark)
+        right_panel.grid(row=1, column=1, sticky="nsew", padx=(10, 0))
         
         self._create_cp_list_card(right_panel)
         
     def _create_metric_cards(self, parent):
+        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_columnconfigure(1, weight=1)
+        parent.grid_columnconfigure(2, weight=1)
+        parent.grid_columnconfigure(3, weight=1)
+        
         metrics = [
             ("Consumo", "0.00", "kWh", "consumption_metric", self.accent_cyan),
             ("Importe", "0.00", "EUR", "price_metric", self.accent_blue),
@@ -194,7 +204,7 @@ class EVDriverGUI:
         
         for i, (label, value, unit, var_name, color) in enumerate(metrics):
             card = self._create_gradient_metric_card(parent, label, value, unit, color)
-            card.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 15) if i < 3 else (0, 0))
+            card.grid(row=0, column=i, sticky="nsew", padx=(0, 15) if i < 3 else (0, 0))
             
     def _create_gradient_metric_card(self, parent, label, value, unit, color):
         card = tk.Frame(parent, bg=self.bg_card)
@@ -415,7 +425,7 @@ class EVDriverGUI:
             return
             
         with self.driver.lock:
-            if self.driver.charging:
+            if self.driver.charging or self.driver.waiting_authorization:
                 return
 
         self.driver._send_charging_request(cp_id)
@@ -505,21 +515,48 @@ class EVDriverGUI:
                 return
         except:
             return
-            
+
         with self.driver.lock:
             charging = self.driver.charging
             current_cp = self.driver.current_cp
             consumption = self.driver.current_consumption
             price = self.driver.current_price
+            waiting = self.driver.waiting_authorization
+
+        if not hasattr(self, "_start_time"):
+            self._start_time = None
 
         if charging:
+            if self._start_time is None:
+                self._start_time = time.time()
+
+            elapsed_time = int(time.time() - self._start_time)
+
             self.status_indicator.config(fg=self.warning)
             self.status_text.config(text="CARGANDO")
             self.status_value.config(text="Cargando", fg=self.warning)
+            self.time_value.config(text=str(elapsed_time))
+
+            self.consumption_value.config(text=f"{consumption:.2f}")
+            self.price_value.config(text=f"{price:.2f}")
+        elif waiting:
+            self._start_time = None
+            self.status_indicator.config(fg=self.accent_blue)
+            self.status_text.config(text="ESPERANDO")
+            self.status_value.config(text="Esperando", fg=self.accent_blue)
+            self.time_value.config(text="0")
+
+            self.consumption_value.config(text="0.00")
+            self.price_value.config(text="0.00")
         else:
+            self._start_time = None
             self.status_indicator.config(fg=self.success)
             self.status_text.config(text="DISPONIBLE")
             self.status_value.config(text="Disponible", fg=self.success)
+            self.time_value.config(text="0")
+
+            self.consumption_value.config(text="0.00")
+            self.price_value.config(text="0.00")
 
         kafka_text = "Conectado" if self.driver.producer else "Desconectado"
         kafka_color = self.success if self.driver.producer else self.error
@@ -531,12 +568,23 @@ class EVDriverGUI:
             self.current_cp_status.config(text="---", fg=self.text_dim)
 
         if charging and current_cp:
-            self.current_charging_label.config(text=f"Cargando en: {current_cp}", fg=self.text_primary)
-            self.cp_entry.config(state=tk.DISABLED, disabledbackground=self.bg_light, disabledforeground=self.text_dim)
+            self.current_charging_label.config(
+                text=f"Cargando en: {current_cp}", fg=self.text_primary
+            )
+            self.cp_entry.config(
+                state=tk.DISABLED,
+                disabledbackground=self.bg_light,
+                disabledforeground=self.text_dim
+            )
             self.request_btn.config(state=tk.DISABLED, bg=self.border)
-            
-            self.consumption_value.config(text=f"{consumption:.2f}")
-            self.price_value.config(text=f"{price:.2f}")
+        elif waiting:
+            self.current_charging_label.config(text="Esperando autorización...", fg=self.accent_blue)
+            self.cp_entry.config(
+                state=tk.DISABLED,
+                disabledbackground=self.bg_light,
+                disabledforeground=self.text_dim
+            )
+            self.request_btn.config(state=tk.DISABLED, bg=self.border)
         else:
             self.current_charging_label.config(text="Sin carga activa", fg=self.text_dim)
             self.cp_entry.config(state=tk.NORMAL, bg=self.bg_light)
@@ -544,13 +592,9 @@ class EVDriverGUI:
                 self.request_btn.config(state=tk.NORMAL, bg=self.accent_blue)
             else:
                 self.request_btn.config(state=tk.DISABLED, bg=self.border)
-            
-            self.consumption_value.config(text="0.00")
-            self.price_value.config(text="0.00")
-            self.time_value.config(text="0")
-        
+
         try:
-            self.root.after(500, self._update_status)
+            self.root.after(1000, self._update_status)
         except:
             pass
             

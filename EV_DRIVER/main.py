@@ -18,6 +18,10 @@ class EVDriver:
         self.current_price = 0
         self.last_telemetry_time = 0
         self.cp_list = {}
+        self.waiting_authorization = False
+        self.file_processing = False
+        self.file_requests = []
+        self.file_index = 0
 
         self.lock = threading.Lock()
 
@@ -116,8 +120,8 @@ class EVDriver:
 
     def _send_charging_request(self, cp_id):
         with self.lock:
-            if self.charging:
-                print("\n[ERROR] Ya existe una carga en curso. Espere a que finalice antes de iniciar otra.\n")
+            if self.charging or self.waiting_authorization:
+                print("\n[ERROR] Ya existe una carga en curso o esperando autorización. Espere a que finalice antes de iniciar otra.\n")
                 return
             
         print(f"\n[SOLICITUD] Enviando solicitud de carga al punto de carga: {cp_id}\n")
@@ -133,11 +137,16 @@ class EVDriver:
                 self._reconnect_kafka()
                 return
 
+            with self.lock:
+                self.waiting_authorization = True
+                
             self.producer.send('solicitudes_suministro', request)
             self.producer.flush()
             print("[OK] Solicitud enviada correctamente.\n")
         except Exception:
             print("\n[ERROR] No se pudo enviar la solicitud al broker Kafka.\n")
+            with self.lock:
+                self.waiting_authorization = False
 
     def _file_process(self, original_file):
         # Esperar a que el registro esté completo
@@ -151,12 +160,30 @@ class EVDriver:
             print(f"\n[ERROR] No se encontró el archivo {original_file}. Verifique el nombre o la ruta.\n")
             return
 
-        for i, cp_id in enumerate(requests, 1):
-            print(f"\n--- Procesando solicitud {i}/{len(requests)} ---\n")
-            self._send_charging_request(cp_id)
+        with self.lock:
+            self.file_processing = True
+            self.file_requests = requests
+            self.file_index = 0
 
-            if i < len(requests):
-                time.sleep(4)
+        print(f"\n[INFO] Procesando {len(requests)} solicitudes secuencialmente...\n")
+        self._process_next_file_request()
+
+    def _process_next_file_request(self):
+        with self.lock:
+            if not self.file_processing:
+                return
+                
+            if self.file_index >= len(self.file_requests):
+                print("\n[INFO] Todas las solicitudes del archivo han sido procesadas.\n")
+                self.file_processing = False
+                return
+            
+            cp_id = self.file_requests[self.file_index]
+            request_num = self.file_index + 1
+            total = len(self.file_requests)
+        
+        print(f"\n--- Procesando solicitud {request_num}/{total} ---\n")
+        self._send_charging_request(cp_id)
 
     def _display_stats(self):
         if self.gui_mode:
@@ -238,14 +265,22 @@ class EVDriver:
                 print(f"\n[AUTORIZADO] {kmsg.get('mensaje', 'Suministro autorizado')}\n")
                 with self.lock:
                     if self.charging:
+                        self.waiting_authorization = False
                         return 
                     
                     self.charging = True
+                    self.waiting_authorization = False
                     self.current_cp = kmsg.get('cp_id')
                     self.last_telemetry_time = time.time()
                 threading.Thread(target=self._display_stats, daemon=True).start()
             else:
                 print(f"\n[DENEGADO] {kmsg.get('mensaje', 'Suministro denegado')}\n")
+                with self.lock:
+                    self.waiting_authorization = False
+                    # Si estamos procesando archivo, continuar con siguiente
+                    if self.file_processing:
+                        self.file_index += 1
+                        threading.Thread(target=self._process_next_file_request, daemon=True).start()
 
         elif topic == 'telemetria_cp' and kmsg.get('conductor_id') == self.driver_id:
             with self.lock:
@@ -265,6 +300,11 @@ class EVDriver:
                 self.current_cp = None
                 self.current_consumption = 0
                 self.current_price = 0
+                
+                # Si estamos procesando archivo, continuar con siguiente
+                if self.file_processing:
+                    self.file_index += 1
+                    threading.Thread(target=self._process_next_file_request, daemon=True).start()
 
         elif topic == 'fin_suministro' and kmsg.get('conductor_id') == self.driver_id:
             print(f"\n[FIN SUMINISTRO] Finalizado en CP: {kmsg.get('cp_id')}\n")
@@ -279,6 +319,11 @@ class EVDriver:
                     self.current_cp = None
                     self.current_consumption = 0
                     self.current_price = 0
+                    
+                    # Si estamos procesando archivo, continuar con siguiente
+                    if self.file_processing:
+                        self.file_index += 1
+                        threading.Thread(target=self._process_next_file_request, daemon=True).start()
 
         elif topic == 'estado_cps':
             tipo = kmsg.get('tipo')

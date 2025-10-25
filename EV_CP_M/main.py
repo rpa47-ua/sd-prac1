@@ -38,20 +38,12 @@ class EVChargingPointMonitor:
         self.last_status = None
         self.running = True
         self.manually_stopped = False
+        self.supply_active_before_disconnect = False
         
         self.central_client = None
         self.engine_client = None
         
         self.lock = threading.Lock()
-
-    def _log(self, message):
-        print(message)
-        if self.gui_mode and self.gui and hasattr(self.gui, 'log_message'):
-            try:
-                if hasattr(self.gui, 'root') and self.gui.root.winfo_exists():
-                    self.gui.root.after(0, lambda msg=message: self.gui.log_message(msg))
-            except:
-                pass
 
     ### CENTRAL
 
@@ -189,12 +181,23 @@ class EVChargingPointMonitor:
 
                 with self.lock:
                     if not current_state:
+                        # Engine desconectado
+                        if self.last_status == "SUMINISTRANDO":
+                            self.supply_active_before_disconnect = True
+                            self._log("[MONITOR] Suministro activo detectado antes de desconexión")
+                        
                         estado = "AVERIA" if not self.manually_stopped else "PARADO"
                         if self.engine_client:
                             try: self.engine_client.close()
                             except: pass
                             self.engine_client = None
                     else:
+                        # Engine conectado
+                        if self.supply_active_before_disconnect and current_state != "SUMINISTRANDO":
+                            # El suministro finalizó durante la desconexión
+                            self._log("[MONITOR] Suministro finalizado durante desconexión del monitor")
+                            self.supply_active_before_disconnect = False
+                        
                         estado = "PARADO" if self.manually_stopped else current_state
 
                     if self.last_status != estado:
@@ -205,6 +208,8 @@ class EVChargingPointMonitor:
                     else:
                         if not self.gui_mode:
                             self._log(f"[MONITOR] Estado actual: {estado}")
+                        else:
+                            print(f"[MONITOR] Estado actual: {estado}")
 
                 time.sleep(1)
 
@@ -215,6 +220,10 @@ class EVChargingPointMonitor:
                     except: pass
                 self.engine_client = None
                 with self.lock:
+                    if self.last_status == "SUMINISTRANDO":
+                        self.supply_active_before_disconnect = True
+                        self._log("[MONITOR] Suministro activo antes de perder conexión")
+                    
                     estado = "AVERIA" if not self.manually_stopped else "PARADO"
                     if self.last_status != estado:
                         self.last_status = estado
@@ -227,6 +236,15 @@ class EVChargingPointMonitor:
 
     def _cleanup(self):
         self._log("\n[MONITOR] Cerrando conexiones...")
+        
+        # Si hay suministro activo, notificar a Central que el monitor se cierra
+        with self.lock:
+            if self.last_status == "SUMINISTRANDO":
+                self._log("[MONITOR] Suministro activo detectado al cerrar. Notificando a Central...")
+                # Notificar avería para que Central finalice el suministro
+                self._notify_central("AVERIA")
+                time.sleep(1)
+        
         self.running = False
         if self.engine_client:
             try: self.engine_client.close()
@@ -287,6 +305,17 @@ class EVChargingPointMonitor:
             print("\n[MONITOR] Interrupción por teclado")
         finally:
             self._cleanup()
+
+    ### UTILIDAD 
+
+    def _log(self, message):
+        print(message)
+        if self.gui_mode and self.gui and hasattr(self.gui, 'log_message'):
+            try:
+                if hasattr(self.gui, 'root') and self.gui.root.winfo_exists():
+                    self.gui.root.after(0, lambda msg=message: self.gui.log_message(msg))
+            except:
+                pass
 
 def main():
     if len(sys.argv) < 4:

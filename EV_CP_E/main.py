@@ -446,6 +446,18 @@ class EVChargingPointEngine:
 
     def end(self):
         self._log("INFO", "Cerrando aplicación...")
+        
+        # Si hay suministro activo, finalizarlo
+        with self.lock:
+            if self.charging and self.current_driver and self.current_supply_id:
+                driver_id = self.current_driver
+                supply_id = self.current_supply_id
+                self._log("INFO", "Finalizando suministro activo antes de cerrar...")
+                self.charging = False
+        
+        # Dar tiempo para que se complete el suministro
+        time.sleep(2)
+        
         self.running = False
         try:
             if self.consumer:
