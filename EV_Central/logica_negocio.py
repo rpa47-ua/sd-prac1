@@ -15,6 +15,7 @@ class LogicaNegocio:
         self.suministros_activos = {}
         self.colas_espera = {}
         self.running = True
+        self.lock = threading.Lock()  # Lock para proteger datos compartidos
 
     def recuperar_suministros_al_inicio(self):
         """Recupera suministros activos y envía tickets pendientes al reiniciar Central"""
@@ -164,15 +165,16 @@ class LogicaNegocio:
 
             # Solo poner en cola si está suministrando (ocupado)
             if cp['estado'] == 'suministrando':
-                if cp_id not in self.colas_espera:
-                    self.colas_espera[cp_id] = []
+                with self.lock:  # Proteger acceso a colas_espera
+                    if cp_id not in self.colas_espera:
+                        self.colas_espera[cp_id] = []
 
-                self.colas_espera[cp_id].append({
-                    'conductor_id': conductor_id,
-                    'origen': origen
-                })
+                    self.colas_espera[cp_id].append({
+                        'conductor_id': conductor_id,
+                        'origen': origen
+                    })
 
-                posicion = len(self.colas_espera[cp_id])
+                    posicion = len(self.colas_espera[cp_id])
                 print(f"[COLA] Conductor {conductor_id} añadido a la cola de {cp_id} (posición {posicion})")
                 self._enviar_respuesta_solicitud(conductor_id, cp_id, False, f"CP ocupado. En cola, posición {posicion}", origen, None)
             else:
@@ -186,12 +188,13 @@ class LogicaNegocio:
         self.db.actualizar_estado_cp(cp_id, 'suministrando')
 
         # Guardar info del suministro activo en memoria
-        self.suministros_activos[cp_id] = {
-            'conductor_id': conductor_id,
-            'suministro_id': suministro_id,
-            'consumo_actual': 0.0,
-            'importe_actual': 0.0
-        }
+        with self.lock:  # Proteger acceso a suministros_activos
+            self.suministros_activos[cp_id] = {
+                'conductor_id': conductor_id,
+                'suministro_id': suministro_id,
+                'consumo_actual': 0.0,
+                'importe_actual': 0.0
+            }
 
         print(f"[OK] Suministro autorizado (ID: {suministro_id})")
 
@@ -236,31 +239,41 @@ class LogicaNegocio:
         """
         Procesa la siguiente solicitud en cola para un CP que se ha liberado
         """
-        if cp_id not in self.colas_espera or len(self.colas_espera[cp_id]) == 0:
-            print(f"[COLA] No hay solicitudes en espera para {cp_id}")
-            return
+        with self.lock:  # Proteger acceso a colas_espera
+            if cp_id not in self.colas_espera or len(self.colas_espera[cp_id]) == 0:
+                print(f"[COLA] No hay solicitudes en espera para {cp_id}")
+                return
 
-        siguiente = self.colas_espera[cp_id].pop(0)
-        conductor_id = siguiente['conductor_id']
-        origen = siguiente['origen']
+            siguiente = self.colas_espera[cp_id].pop(0)
+            conductor_id = siguiente['conductor_id']
+            origen = siguiente['origen']
 
         print(f"[COLA] Procesando siguiente en cola: Conductor {conductor_id} -> CP {cp_id}")
+
+        # Verificar que el conductor sigue conectado
+        conductor = self.db.obtener_conductor(conductor_id)
+        if not conductor or not conductor.get('conectado', False):
+            print(f"[COLA] Conductor {conductor_id} ya no está conectado. Procesando siguiente en cola...")
+            self._procesar_siguiente_en_cola(cp_id)
+            return
 
         cp = self.db.obtener_cp(cp_id)
         if not cp or cp['estado'] != 'activado':
             print(f"[ERROR] CP {cp_id} no disponible para procesar cola")
-            self.colas_espera[cp_id].insert(0, siguiente)
+            with self.lock:
+                self.colas_espera[cp_id].insert(0, siguiente)
             return
 
         suministro_id = self.db.crear_suministro(conductor_id, cp_id)
         self.db.actualizar_estado_cp(cp_id, 'suministrando')
 
-        self.suministros_activos[cp_id] = {
-            'conductor_id': conductor_id,
-            'suministro_id': suministro_id,
-            'consumo_actual': 0.0,
-            'importe_actual': 0.0
-        }
+        with self.lock:  # Proteger acceso a suministros_activos
+            self.suministros_activos[cp_id] = {
+                'conductor_id': conductor_id,
+                'suministro_id': suministro_id,
+                'consumo_actual': 0.0,
+                'importe_actual': 0.0
+            }
 
         print(f"[OK] Suministro autorizado desde cola (ID: {suministro_id})")
 
@@ -284,28 +297,29 @@ class LogicaNegocio:
         consumo_actual = mensaje.get('consumo_actual', 0.0)
         importe_actual = mensaje.get('importe_actual', 0.0)
 
-        if cp_id in self.suministros_activos:
-            # Actualizar valores en memoria
-            self.suministros_activos[cp_id]['consumo_actual'] = consumo_actual
-            self.suministros_activos[cp_id]['importe_actual'] = importe_actual
+        with self.lock:  # Proteger acceso a suministros_activos
+            if cp_id in self.suministros_activos:
+                # Actualizar valores en memoria
+                self.suministros_activos[cp_id]['consumo_actual'] = consumo_actual
+                self.suministros_activos[cp_id]['importe_actual'] = importe_actual
 
-            # Actualizar en BD
-            suministro_id = self.suministros_activos[cp_id]['suministro_id']
-            self.db.actualizar_suministro(suministro_id, consumo_actual, importe_actual)
-        else:
-            # Si no está en memoria, recuperar de BD (Central reiniciado durante suministro)
-            suministro = self.db.obtener_suministro_activo(cp_id)
-            if suministro:
-                print(f"[RECUPERACIÓN] Telemetría recibida para {cp_id} sin suministro en memoria, recuperando de BD...")
-                self.suministros_activos[cp_id] = {
-                    'conductor_id': suministro['conductor_id'],
-                    'suministro_id': suministro['id'],
-                    'consumo_actual': consumo_actual,
-                    'importe_actual': importe_actual
-                }
-                # Actualizar en BD con valores de telemetría
-                self.db.actualizar_suministro(suministro['id'], consumo_actual, importe_actual)
-                print(f"  [OK] Recuperado suministro ID {suministro['id']} con telemetría actual")
+                # Actualizar en BD
+                suministro_id = self.suministros_activos[cp_id]['suministro_id']
+                self.db.actualizar_suministro(suministro_id, consumo_actual, importe_actual)
+            else:
+                # Si no está en memoria, recuperar de BD (Central reiniciado durante suministro)
+                suministro = self.db.obtener_suministro_activo(cp_id)
+                if suministro:
+                    print(f"[RECUPERACIÓN] Telemetría recibida para {cp_id} sin suministro en memoria, recuperando de BD...")
+                    self.suministros_activos[cp_id] = {
+                        'conductor_id': suministro['conductor_id'],
+                        'suministro_id': suministro['id'],
+                        'consumo_actual': consumo_actual,
+                        'importe_actual': importe_actual
+                    }
+                    # Actualizar en BD con valores de telemetría
+                    self.db.actualizar_suministro(suministro['id'], consumo_actual, importe_actual)
+                    print(f"  [OK] Recuperado suministro ID {suministro['id']} con telemetría actual")
 
             # La telemetría ya está en el topic correcto (telemetria_cp)
             # El driver debe suscribirse a 'telemetria_cp' no 'telemtria_cp'
@@ -324,20 +338,29 @@ class LogicaNegocio:
 
         print(f"\n[FIN] Finalizando suministro en {cp_id}")
 
-        if cp_id in self.suministros_activos:
-            # Usar el suministro_id que viene del Engine (más confiable)
-            info = self.suministros_activos[cp_id]
-            suministro_id_memoria = info['suministro_id']
-            conductor_id_memoria = info['conductor_id']
+        with self.lock:  # Proteger acceso a suministros_activos
+            if cp_id in self.suministros_activos:
+                # Usar el suministro_id que viene del Engine (más confiable)
+                info = self.suministros_activos[cp_id]
+                suministro_id_memoria = info['suministro_id']
+                conductor_id_memoria = info['conductor_id']
 
-            # Verificar consistencia (opcional, para debug)
-            if suministro_id and suministro_id != suministro_id_memoria:
-                print(f"[AVISO] Suministro ID inconsistente: Engine={suministro_id}, Memoria={suministro_id_memoria}")
+                # Verificar consistencia (opcional, para debug)
+                if suministro_id and suministro_id != suministro_id_memoria:
+                    print(f"[AVISO] Suministro ID inconsistente: Engine={suministro_id}, Memoria={suministro_id_memoria}")
 
-            # Usar el suministro_id de memoria (más confiable)
-            final_suministro_id = suministro_id_memoria
-            final_conductor_id = conductor_id_memoria
+                # Usar el suministro_id de memoria (más confiable)
+                final_suministro_id = suministro_id_memoria
+                final_conductor_id = conductor_id_memoria
 
+                # Eliminar de suministros activos (antes de liberar el lock)
+                del self.suministros_activos[cp_id]
+            else:
+                # Mover esto fuera del else para evitar repetición
+                final_suministro_id = suministro_id
+                final_conductor_id = conductor_id
+
+        if final_suministro_id and final_conductor_id:
             # Finalizar en BD
             self.db.finalizar_suministro(final_suministro_id, consumo_kwh, importe)
 
@@ -354,14 +377,10 @@ class LogicaNegocio:
             # Marcar ticket como enviado
             self.db.marcar_ticket_enviado(final_suministro_id)
 
-            # Eliminar de suministros activos
-            del self.suministros_activos[cp_id]
-
             print(f"[OK] Suministro finalizado. Ticket enviado a {final_conductor_id}")
             print(f"[ESPERA] CP {cp_id} esperará 4 segundos antes de estar disponible de nuevo...")
 
             # Iniciar hilo para esperar 4 segundos antes de activar el CP
-            import threading
             def activar_tras_espera():
                 time.sleep(4)
                 cp_actual = self.db.obtener_cp(cp_id)
@@ -372,36 +391,7 @@ class LogicaNegocio:
 
             threading.Thread(target=activar_tras_espera, daemon=True).start()
         else:
-            print(f"[AVISO] Fin de suministro recibido para {cp_id} pero no hay suministro activo en memoria")
-            # Intentar finalizar de todos modos si tenemos los datos
-            if suministro_id and conductor_id:
-                self.db.finalizar_suministro(suministro_id, consumo_kwh, importe)
-
-                # Enviar ticket
-                self.kafka.enviar_mensaje('tickets', {
-                    'conductor_id': conductor_id,
-                    'cp_id': cp_id,
-                    'suministro_id': suministro_id,
-                    'consumo_kwh': consumo_kwh,
-                    'importe_total': importe
-                })
-                time.sleep(2)
-
-                # Marcar ticket como enviado
-                self.db.marcar_ticket_enviado(suministro_id)
-
-                print(f"[OK] Suministro {suministro_id} finalizado (recuperado). Ticket enviado a {conductor_id}")
-                print(f"[ESPERA] CP {cp_id} esperará 4 segundos antes de estar disponible de nuevo...")
-
-                def activar_tras_espera():
-                    time.sleep(4)
-                    cp_actual = self.db.obtener_cp(cp_id)
-                    if cp_actual and cp_actual['estado'] == 'suministrando':
-                        self.db.actualizar_estado_cp(cp_id, 'activado')
-                        print(f"[OK] CP {cp_id} disponible de nuevo tras período de espera")
-                        self._procesar_siguiente_en_cola(cp_id)
-
-                threading.Thread(target=activar_tras_espera, daemon=True).start()
+            print(f"[AVISO] Fin de suministro recibido pero no hay datos completos para procesar")
 
     def procesar_averia_cp(self, mensaje: dict):
         """
@@ -417,24 +407,31 @@ class LogicaNegocio:
         self.db.actualizar_estado_cp(cp_id, 'averiado')
 
         # Si estaba suministrando, finalizar suministro de emergencia
-        if cp_id in self.suministros_activos:
-            info = self.suministros_activos[cp_id]
-            self.db.finalizar_suministro(
-                info['suministro_id'],
-                info['consumo_actual'],
-                info['importe_actual']
-            )
+        with self.lock:  # Proteger acceso a suministros_activos
+            if cp_id in self.suministros_activos:
+                info = self.suministros_activos[cp_id]
+                conductor_id_emergencia = info['conductor_id']
 
-            # Notificar al conductor
+                self.db.finalizar_suministro(
+                    info['suministro_id'],
+                    info['consumo_actual'],
+                    info['importe_actual']
+                )
+
+                # Eliminar de suministros activos
+                del self.suministros_activos[cp_id]
+            else:
+                conductor_id_emergencia = None
+
+        # Notificar al conductor (fuera del lock)
+        if conductor_id_emergencia:
             self.kafka.enviar_mensaje('notificaciones', {
                 'tipo': 'AVERIA_DURANTE_SUMINISTRO',
-                'conductor_id': info['conductor_id'],
+                'conductor_id': conductor_id_emergencia,
                 'cp_id': cp_id,
                 'mensaje': 'Suministro interrumpido por avería'
             })
             time.sleep(2)
-
-            del self.suministros_activos[cp_id]
 
     def procesar_recuperacion_cp(self, mensaje: dict):
         """
@@ -497,12 +494,13 @@ class LogicaNegocio:
 
             print(f"[RECUPERACIÓN] Engine {cp_id} reporta suministro activo (ID: {suministro_id})")
 
-            self.suministros_activos[cp_id] = {
-                'conductor_id': conductor_id,
-                'suministro_id': suministro_id,
-                'consumo_actual': consumo_actual,
-                'importe_actual': importe_actual
-            }
+            with self.lock:  # Proteger acceso a suministros_activos
+                self.suministros_activos[cp_id] = {
+                    'conductor_id': conductor_id,
+                    'suministro_id': suministro_id,
+                    'consumo_actual': consumo_actual,
+                    'importe_actual': importe_actual
+                }
 
             # Actualizar en BD
             self.db.actualizar_suministro(suministro_id, consumo_actual, importe_actual)
@@ -551,19 +549,20 @@ class LogicaNegocio:
                 self._publicar_estado_cp(cp_id, 'suministrando')
 
             # Recuperar suministro de BD si no está en memoria (recuperación tras caída de Central)
-            if cp_id not in self.suministros_activos:
-                suministro = self.db.obtener_suministro_activo(cp_id)
-                if suministro:
-                    print(f"[RECUPERACIÓN] Suministro activo encontrado para {cp_id}")
-                    self.suministros_activos[cp_id] = {
-                        'conductor_id': suministro['conductor_id'],
-                        'suministro_id': suministro['id'],
-                        'consumo_actual': float(suministro.get('consumo_kwh', 0.0)),
-                        'importe_actual': float(suministro.get('importe_total', 0.0))
-                    }
-                    print(f"  [OK] Recuperado suministro ID {suministro['id']} - Conductor {suministro['conductor_id']}")
-                else:
-                    print(f"[AVISO] Engine reporta SUMINISTRANDO pero no hay suministro activo en BD para {cp_id}")
+            with self.lock:  # Proteger acceso a suministros_activos
+                if cp_id not in self.suministros_activos:
+                    suministro = self.db.obtener_suministro_activo(cp_id)
+                    if suministro:
+                        print(f"[RECUPERACIÓN] Suministro activo encontrado para {cp_id}")
+                        self.suministros_activos[cp_id] = {
+                            'conductor_id': suministro['conductor_id'],
+                            'suministro_id': suministro['id'],
+                            'consumo_actual': float(suministro.get('consumo_kwh', 0.0)),
+                            'importe_actual': float(suministro.get('importe_total', 0.0))
+                        }
+                        print(f"  [OK] Recuperado suministro ID {suministro['id']} - Conductor {suministro['conductor_id']}")
+                    else:
+                        print(f"[AVISO] Engine reporta SUMINISTRANDO pero no hay suministro activo en BD para {cp_id}")
 
         elif estado_engine == 'PARADO':
             print(f"[ESTADO] CP {cp_id} -> parado (Monitor reporta PARADO)")
@@ -576,25 +575,31 @@ class LogicaNegocio:
             self._publicar_estado_cp(cp_id, 'averiado')
 
             # Si estaba suministrando, finalizar de emergencia
-            if cp_id in self.suministros_activos:
-                info = self.suministros_activos[cp_id]
-                print(f"[EMERGENCIA] Finalizando suministro en {cp_id} por avería del Engine")
+            with self.lock:  # Proteger acceso a suministros_activos
+                if cp_id in self.suministros_activos:
+                    info = self.suministros_activos[cp_id]
+                    conductor_id_averia = info['conductor_id']
+                    print(f"[EMERGENCIA] Finalizando suministro en {cp_id} por avería del Engine")
 
-                self.db.finalizar_suministro(
-                    info['suministro_id'],
-                    info['consumo_actual'],
-                    info['importe_actual']
-                )
+                    self.db.finalizar_suministro(
+                        info['suministro_id'],
+                        info['consumo_actual'],
+                        info['importe_actual']
+                    )
 
+                    del self.suministros_activos[cp_id]
+                else:
+                    conductor_id_averia = None
+
+            # Enviar notificación fuera del lock
+            if conductor_id_averia:
                 self.kafka.enviar_mensaje('notificaciones', {
                     'tipo': 'AVERIA_ENGINE',
-                    'conductor_id': info['conductor_id'],
+                    'conductor_id': conductor_id_averia,
                     'cp_id': cp_id,
                     'mensaje': f'Suministro interrumpido: Engine de CP {cp_id} averiado'
                 })
                 time.sleep(2)
-
-                del self.suministros_activos[cp_id]
 
     def manejar_desconexion_monitor(self, cp_id: str):
         """
@@ -609,12 +614,13 @@ class LogicaNegocio:
 
         # NO finalizar el suministro - el Engine sigue funcionando
         # El suministro se recuperará cuando el Monitor se reconecte
-        if cp_id in self.suministros_activos:
-            info = self.suministros_activos[cp_id]
-            print(f"[INFO] CP {cp_id} tiene suministro activo (ID: {info['suministro_id']})")
-            print(f"[INFO] El suministro continuará en el Engine y se recuperará al reconectar")
+        with self.lock:  # Proteger acceso a suministros_activos
+            if cp_id in self.suministros_activos:
+                info = self.suministros_activos[cp_id]
+                print(f"[INFO] CP {cp_id} tiene suministro activo (ID: {info['suministro_id']})")
+                print(f"[INFO] El suministro continuará en el Engine y se recuperará al reconectar")
 
-            # NO eliminar de memoria ni finalizar en BD - se recuperará después
+                # NO eliminar de memoria ni finalizar en BD - se recuperará después
 
     def parar_cp(self, cp_id: str):
         """Para un CP manualmente desde la GUI"""
@@ -678,8 +684,11 @@ class LogicaNegocio:
 
     def obtener_estado_sistema(self):
         """Retorna el estado actual de todos los CPs y suministros"""
+        with self.lock:  # Proteger acceso a suministros_activos
+            suministros_copy = self.suministros_activos.copy()
+
         return {
             'cps': self.db.obtener_todos_los_cps(),
-            'suministros_activos': self.suministros_activos
+            'suministros_activos': suministros_copy
         }
 

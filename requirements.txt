@@ -6,3 +6,4 @@ kafka-python== 2.2.0
 # Base de datos
 pymysql==1.1.0
 cryptography==41.0.7
+DBUtils==3.0.3

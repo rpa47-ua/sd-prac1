@@ -172,17 +172,26 @@ class EVDriver:
         with self.lock:
             if not self.file_processing:
                 return
-                
+
             if self.file_index >= len(self.file_requests):
                 print("\n[INFO] Todas las solicitudes del archivo han sido procesadas.\n")
                 self.file_processing = False
                 return
-            
+
             cp_id = self.file_requests[self.file_index]
             request_num = self.file_index + 1
             total = len(self.file_requests)
-        
+
         print(f"\n--- Procesando solicitud {request_num}/{total} ---\n")
+
+        # Esperar hasta que no haya suministro activo ni esperando autorización
+        while True:
+            with self.lock:
+                if not self.charging and not self.waiting_authorization:
+                    break
+            print(f"[INFO] Esperando a que termine el suministro actual antes de procesar solicitud {request_num}/{total}...\n")
+            time.sleep(2)
+
         self._send_charging_request(cp_id)
 
     def _display_stats(self):
@@ -274,13 +283,19 @@ class EVDriver:
                     self.last_telemetry_time = time.time()
                 threading.Thread(target=self._display_stats, daemon=True).start()
             else:
-                print(f"\n[DENEGADO] {kmsg.get('mensaje', 'Suministro denegado')}\n")
+                mensaje = kmsg.get('mensaje', 'Suministro denegado')
+                print(f"\n[DENEGADO] {mensaje}\n")
+
+                en_cola = 'En cola' in mensaje
+
                 with self.lock:
-                    self.waiting_authorization = False
-                    # Si estamos procesando archivo, continuar con siguiente
-                    if self.file_processing:
-                        self.file_index += 1
-                        threading.Thread(target=self._process_next_file_request, daemon=True).start()
+                    if en_cola:
+                        print(f"[INFO] Permaneciendo en cola. Esperando autorización...\n")
+                    else:
+                        self.waiting_authorization = False
+                        if self.file_processing:
+                            self.file_index += 1
+                            threading.Thread(target=self._process_next_file_request, daemon=True).start()
 
         elif topic == 'telemetria_cp' and kmsg.get('conductor_id') == self.driver_id:
             with self.lock:
@@ -377,10 +392,11 @@ class EVDriver:
             
         print(f"=== Conductor: {self.driver_id} ===\n")
         print("Comandos disponibles:\n"
-              "  <CP_ID>  - Solicitar suministro en punto de carga\n"
-              "  lista    - Ver puntos de carga disponibles\n"
-              "  file     - Procesar solicitudes desde suministros.txt\n"
-              "  salir    - Salir de la aplicación\n")
+              "  <CP_ID>       - Solicitar suministro en punto de carga\n"
+              "  lista         - Ver puntos de carga disponibles\n"
+              "  file          - Procesar solicitudes desde suministros.txt\n"
+              "  file <nombre> - Procesar solicitudes desde archivo específico\n"
+              "  salir         - Salir de la aplicación\n")
 
         while self.running:
             try:
@@ -400,6 +416,13 @@ class EVDriver:
                     self._list_cps()
                 elif u_input.lower() == 'file':
                     self._file_process("suministros.txt")
+                elif u_input.lower().startswith('file '):
+                    parts = u_input.split(maxsplit=1)
+                    if len(parts) > 1:
+                        filename = parts[1].strip()
+                        self._file_process(filename)
+                    else:
+                        print("\n[ERROR] Formato incorrecto. Use: file <nombre_archivo>\n")
                 else:
                     self._send_charging_request(u_input.upper())
                     
