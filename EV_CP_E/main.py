@@ -52,13 +52,47 @@ class EVChargingPointEngine:
         self.lock = threading.Lock()
         self.print_lock = threading.Lock()
 
+        # Variables de línea de estado
+        self._status_active = False
+        self._status_text = ""
+        self._status_length = 0
+
         self.producer = None
         self.consumer = None
         self._init_kafka()
         self._init_monitor()
 
+    ### MÉTODO DE LOG ÚNICO
+    def _log(self, level, msg, status=False, end="\n"):
+        """
+        Método unificado de logging.
+        Si status=True -> muestra línea de estado dinámica (una sola línea que se actualiza).
+        Si status=False -> imprime un log normal, gestionando la línea de estado activa.
+        """
+        with self.print_lock:
+            if status:
+                # Línea dinámica (estado en curso)
+                text = f"\r{msg}"
+                self._status_active = True
+                self._status_text = text
+                self._status_length = len(msg)
+                sys.stdout.write(text)
+                sys.stdout.flush()
+            else:
+                # Limpia línea de estado antes de escribir log
+                if self._status_active:
+                    sys.stdout.write('\r' + ' ' * self._status_length + '\r')
+                    sys.stdout.flush()
+
+                print(f"[{level}] {msg}", end=end, flush=True)
+
+                # Redibuja línea de estado si está activa
+                if self._status_active:
+                    sys.stdout.write(self._status_text)
+                    sys.stdout.flush()
+
     ### KAFKA
-    
+
     def _init_kafka(self):
         try:
             self.producer = KafkaProducer(
@@ -73,9 +107,29 @@ class EVChargingPointEngine:
                 enable_auto_commit=True
             )
 
-            self.consumer.subscribe(['respuestas_cp', 'respuestas_conductor', 'solicitud_estado_engine', 'estado_central'])
+            self.consumer.subscribe(['respuestas_cp','respuestas_conductor','solicitud_estado_engine','estado_central'])
 
             self._log("OK", f"Conectado a Kafka en {self.broker}")
+
+            try:
+                tmp_consumer = KafkaConsumer(
+                    'estado_central',
+                    bootstrap_servers=self.broker,
+                    value_deserializer=lambda m: json.loads(m.decode('utf-8')),
+                    auto_offset_reset='earliest',
+                    enable_auto_commit=False,
+                    consumer_timeout_ms=500 
+                )
+                for msg in tmp_consumer:
+                    if msg.key == b'central':
+                        self.central_status = msg.value.get('estado', False)
+                        break
+
+                tmp_consumer.close()
+
+            except Exception:
+                self._log("ERROR", "No se pudo leer el estado inicial de la Central.")
+
         except Exception:
             self._log("ERROR", "No se pudo establecer conexión con Kafka. Verifique el broker o la red.")
             self.producer = None
@@ -99,16 +153,13 @@ class EVChargingPointEngine:
                 self._reconnect_kafka()
                 time.sleep(2)
                 continue
-
             try:
                 records = self.consumer.poll(timeout_ms=1000)
                 if not self.running:
                     break
-
                 for tp, msgs in records.items():
                     for msg in msgs:
                         kmsg = msg.value
-
                         if msg.topic == "estado_central":
                             with self.lock:
                                 self.central_status = kmsg.get('estado', False)
@@ -122,7 +173,6 @@ class EVChargingPointEngine:
                 time.sleep(2)
 
     ### MONITOR
-
     def _init_monitor(self):
         try:
             self.monitor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -175,16 +225,13 @@ class EVChargingPointEngine:
                     self._log("ERROR", "Fallo en la conexión con el monitor.")
                     time.sleep(1)
 
-    ### SUMINISTRO Y FUNCIONALIDADES
-
+    ### SUMINISTRO
     def _handle_engine_state(self, kmsg):
         if kmsg.get('tipo') == 'SOLICITAR_ESTADO':
             with self.lock:
                 if self.charging and self.current_driver and self.current_supply_id:
-                    # Calcular estado actual
                     consumo = self.kWH
                     importe = consumo * self.price
-
                     respuesta = {
                         'cp_id': self.cp_id,
                         'activo': True,
@@ -193,14 +240,10 @@ class EVChargingPointEngine:
                         'consumo_actual': round(consumo, 3),
                         'importe_actual': round(importe, 2)
                     }
-                    self._log("INFO", f"Enviando estado de suministro activo a Central")
+                    self._log("INFO", "Enviando estado de suministro activo a Central")
                 else:
-                    respuesta = {
-                        'cp_id': self.cp_id,
-                        'activo': False
-                    }
-                    self._log("INFO", f"No hay suministro activo para reportar")
-
+                    respuesta = {'cp_id': self.cp_id, 'activo': False}
+                    self._log("INFO", "No hay suministro activo para reportar")
                 try:
                     self.producer.send('respuesta_estado_engine', respuesta)
                     self.producer.flush()
@@ -240,12 +283,9 @@ class EVChargingPointEngine:
         with self.lock:
             driver_id = self.current_driver
             supply_id = self.current_supply_id
-
         self._log("EVENTO", f"Suministro iniciado | Conductor {driver_id} | ID {supply_id} | Precio {self.price:.2f} €/kWh")
-
         consumed_kwh = 0
         total_price = 0
-
         while True:
             with self.lock:
                 if not self.charging or not self.running:
@@ -255,61 +295,34 @@ class EVChargingPointEngine:
                     self._notify_breakdown(driver_id)
                     self.charging = False
                     break
-
             consumed_kwh += self.kWH
             total_price = consumed_kwh * self.price
-            
-            telemetry = {
-                'cp_id': self.cp_id,
-                'conductor_id': driver_id,
-                'consumo_actual': round(consumed_kwh, 2),
-                'importe_actual': round(total_price, 2)
-            }
-
+            telemetry = {'cp_id': self.cp_id, 'conductor_id': driver_id, 'consumo_actual': round(consumed_kwh, 2), 'importe_actual': round(total_price, 2)}
             try:
-                if self.producer:
-                    self.producer.send('telemetria_cp', telemetry)
-                    self.producer.flush()
+                self.producer.send('telemetria_cp', telemetry)
+                self.producer.flush()
             except Exception:
                 pass
-
             time.sleep(1)
-
         if not self.breakdown_status:
-            end_msg = {
-                'conductor_id': driver_id,
-                'cp_id': self.cp_id,
-                'suministro_id': self.current_supply_id,
-                'consumo_kwh': round(consumed_kwh, 2),
-                'importe_total': round(total_price, 2)
-            }
+            end_msg = {'conductor_id': driver_id, 'cp_id': self.cp_id, 'suministro_id': self.current_supply_id, 'consumo_kwh': round(consumed_kwh, 2), 'importe_total': round(total_price, 2)}
             try:
-                if self.producer:
-                    self.producer.send('fin_suministro', end_msg)
-                    self.producer.flush()
-                    self._log("OK", "Fin de suministro comunicado a la central.")
+                self.producer.send('fin_suministro', end_msg)
+                self.producer.flush()
+                self._log("OK", "Fin de suministro comunicado a la central.")
             except Exception:
                 self._log("ERROR", "No se pudo comunicar el fin de suministro.")
-
         with self.lock:
             self.charging = False
             self.current_driver = None
             self.current_supply_id = None
-
         self._log("EVENTO", f"Suministro finalizado. Consumo total {consumed_kwh:.2f} kWh | Total {total_price:.2f} EUR")
 
-
-    ### UTILIDAD
-
-    def _log(self, level, msg, end="\n"):
-        with self.print_lock:
-            print(f"\n[{level}] {msg}", end=end, flush=True)
-
+    ### DISPLAY
     def _display_stats(self):
         start_time = time.time()
         consumed_kwh = 0
         total_price = 0
-
         while True:
             with self.lock:
                 if not self.charging:
@@ -318,35 +331,16 @@ class EVChargingPointEngine:
                 total_price = consumed_kwh * self.price
                 driver = self.current_driver
                 cp = self.cp_id
-
             duration = int(time.time() - start_time)
-            
-            with self.print_lock:
-                print(
-                    f"\rCP {cp} | Conductor {driver} | Tiempo {duration}s | "
-                    f"Consumo {consumed_kwh:.2f} kWh | Total {total_price:.2f} EUR",
-                    end='', flush=True
-                )
-            
-            if self.gui_mode and self.gui and hasattr(self.gui, '_update_metrics'):
-                try:
-                    if hasattr(self.gui, 'root') and self.gui.root.winfo_exists():
-                        self.gui.root.after(0, lambda c=consumed_kwh, p=total_price, d=duration: 
-                                           self.gui._update_metrics(c, p, d))
-                except:
-                    pass
-            
+            status_text = f"CP {cp} | Conductor {driver} | Tiempo {duration}s | Consumo {consumed_kwh:.2f} kWh | Total {total_price:.2f} EUR"
+            self._log("", status_text, status=True)
             time.sleep(1)
-            
-        with self.print_lock:
-            print()
+        self._log("", "", status=True, end="\n")
 
     ### ENGINE
-
     def start(self):
         threading.Thread(target=self._listen_kafka, daemon=True).start()
         threading.Thread(target=self._listen_monitor, daemon=True).start()
-
         if self.gui_mode:
             self._start_with_gui()
         else:
@@ -356,50 +350,31 @@ class EVChargingPointEngine:
         try:
             from gui import EVChargingGUI
             self.gui = EVChargingGUI(self)
-            
             cli_thread = threading.Thread(target=self._start_cli, daemon=True)
             cli_thread.start()
-            
-            try:
-                self.gui.run()
-            except:
-                pass
-        except ImportError:
-            print("\n[ERROR] No se pudo importar el módulo GUI. Asegúrese de que gui.py existe.")
-            print("[INFO] Cambiando a modo CLI...\n")
-            self.gui_mode = False
-            self._start_cli()
+            self.gui.run()
         except Exception as e:
-            print(f"\n[ERROR] Error al iniciar GUI: {e}")
-            print("[INFO] Cambiando a modo CLI...\n")
+            self._log("ERROR", f"No se pudo iniciar GUI: {e}")
             self.gui_mode = False
             self._start_cli()
 
     def _start_cli(self):
         if self.gui_mode:
             time.sleep(0.5)
-            
-        self._log("OK", f"Punto de carga {self.cp_id} operativo.\n")
-        print("=== MENÚ DE COMANDOS ===")
-        print("  S <ID_CONDUCTOR>  → Solicitar suministro")
-        print("  F                 → Finalizar suministro actual")
-        print("  A                 → Simular avería")
-        print("  R                 → Reparar avería")
-        print("  SALIR             → Cerrar la aplicación")
-        print("=========================\n")
-
+        self._log("OK", f"Punto de carga {self.cp_id} operativo.")
+        self._log("INFO", "=== MENÚ DE COMANDOS ===")
+        self._log("INFO", "S <ID_CONDUCTOR>  → Solicitar suministro")
+        self._log("INFO", "F                 → Finalizar suministro actual")
+        self._log("INFO", "A                 → Simular avería")
+        self._log("INFO", "R                 → Reparar avería")
+        self._log("INFO", "SALIR             → Cerrar la aplicación")
+        self._log("INFO", "=========================")
         while self.running:
             try:
                 cmd = input().strip()
                 if not cmd:
                     continue
-
                 if cmd.upper() == 'SALIR':
-                    if self.gui_mode and self.gui:
-                        try:
-                            self.gui.root.after(0, self.gui.root.destroy)
-                        except:
-                            pass
                     break
                 elif cmd.upper() == 'A':
                     with self.lock:
@@ -440,30 +415,15 @@ class EVChargingPointEngine:
                 else:
                     self._log("INFO", "Comando no reconocido.")
             except (EOFError, KeyboardInterrupt):
-                if self.gui_mode and self.gui:
-                    try:
-                        self.gui.root.after(0, self.gui.root.destroy)
-                    except:
-                        pass
                 break
-            except Exception:
-                self._log("ERROR", "Error interno al procesar el comando.")
-        
-        if not self.gui_mode:
-            self.end()
+        self.end()
 
     def end(self):
         self._log("INFO", "Cerrando aplicación...")
-        
         with self.lock:
-            if self.charging and self.current_driver and self.current_supply_id:
-                driver_id = self.current_driver
-                supply_id = self.current_supply_id
-                self._log("INFO", "Finalizando suministro activo antes de cerrar...")
+            if self.charging:
                 self.charging = False
-        
-        time.sleep(2)
-        
+        time.sleep(1)
         self.running = False
         try:
             if self.consumer:
@@ -483,13 +443,10 @@ def main():
         print("Ejemplo CLI: python main.py localhost:9092 localhost:5050 CP001")
         print("Ejemplo GUI: python main.py localhost:9092 localhost:5050 CP001 --gui")
         sys.exit(1)
-
     broker = sys.argv[1]
     monitor_ip, monitor_port = sys.argv[2].split(':')
     cp_id = sys.argv[3]
-    
     gui_mode = '--gui' in sys.argv or '-g' in sys.argv
-
     engine = EVChargingPointEngine(broker, cp_id, monitor_ip, monitor_port, gui_mode=gui_mode)
     time.sleep(1)
     engine.start()

@@ -21,7 +21,7 @@ docker exec -it broker_evcharging /opt/kafka/bin/kafka-topics.sh --create --boot
 
 docker exec -it broker_evcharging /opt/kafka/bin/kafka-topics.sh --create --bootstrap-server localhost:9092 --topic estado_cps --partitions 1 --replication-factor 1 --if-not-exists
 
-docker exec -it broker_evcharging /opt/kafka/bin/kafka-topics.sh --create --bootstrap-server localhost:9092 --topic estado_central --partitions 1 --replication-factor 1 --if-not-exists
+docker exec -it broker_evcharging /opt/kafka/bin/kafka-topics.sh --create --bootstrap-server localhost:9092 --topic estado_central --partitions 1 --replication-factor 1 --config cleanup.policy=compact --if-not-exists
 
 echo.
 echo Topics creados. Listado de topics:

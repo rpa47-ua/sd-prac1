@@ -128,7 +128,8 @@ class EVCentral:
         print("SISTEMA INICIADO CORRECTAMENTE")
         print("=" * 60 + "\n")
 
-        self.kafka.producer.send('estado_central', {'estado': True})
+        self.kafka.producer.send('estado_central', key=b'central', value={'estado': True})
+        self.kafka.producer.flush
 
         return True
 
@@ -156,7 +157,8 @@ class EVCentral:
     def detener(self):
         """Detiene todos los componentes del sistema"""
         self.running = False
-        self.kafka.producer.send('estado_central', {'estado': False})
+        self.kafka.producer.send('estado_central', key=b'central', value={'estado': False})
+        self.kafka.producer.flush
 
         if self.panel:
             self.panel.detener()

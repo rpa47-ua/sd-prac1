@@ -76,6 +76,26 @@ class EVDriver:
             self.consumer.subscribe(['respuestas_conductor', 'telemetria_cp', 'tickets', 'notificaciones', 'fin_suministro', 'estado_cps', 'estado_central'])
 
             print(f"\n[OK] Conectado a Kafka en {self.broker}\n")
+
+            try:
+                tmp_consumer = KafkaConsumer(
+                    'estado_central',
+                    bootstrap_servers=self.broker,
+                    value_deserializer=lambda m: json.loads(m.decode('utf-8')),
+                    auto_offset_reset='earliest',
+                    enable_auto_commit=False,
+                    consumer_timeout_ms=500 
+                )
+                for msg in tmp_consumer:
+                    if msg.key == b'central':
+                        self.central_status = msg.value.get('estado', False)
+                        break
+
+                tmp_consumer.close()
+
+            except Exception:
+                self._log("ERROR", "No se pudo leer el estado inicial de la Central.")
+                
         except Exception:
             print("\n[ERROR] No se pudo iniciar la conexión con Kafka. Verifique el broker y vuelva a intentarlo.\n")
             self.producer = None
