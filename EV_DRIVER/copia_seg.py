@@ -5,9 +5,11 @@ import threading
 from kafka import KafkaProducer, KafkaConsumer
 
 class EVDriver:
-    def __init__(self, broker, driver_id):
+    def __init__(self, broker, driver_id, gui_mode=False):
         self.broker = broker
         self.driver_id = driver_id
+        self.gui_mode = gui_mode
+        self.gui = None
 
         self.charging = False
         self.running = True
@@ -16,15 +18,44 @@ class EVDriver:
         self.current_price = 0
         self.last_telemetry_time = 0
         self.cp_list = {}
+        self.waiting_authorization = False
+        self.file_processing = False
+        self.file_requests = []
+        self.file_index = 0
 
         self.lock = threading.Lock()
 
         self._init_kafka()
+        self._registrar_conductor()
 
         self.thread = threading.Thread(target=self._listen_kafka, daemon=True)
         self.thread.start()
 
-    ### KAFKA 
+    ### KAFKA
+
+    def _registrar_conductor(self):
+        """Registra el conductor en el sistema al iniciar"""
+        if self.producer:
+            try:
+                registro = {
+                    'tipo': 'CONECTAR',
+                    'conductor_id': self.driver_id
+                }
+                self.producer.send('registro_conductores', registro)
+                self.producer.flush()
+                time.sleep(3)
+                print(f"[REGISTRO] Conductor {self.driver_id} registrado en el sistema\n")
+
+                # Solicitar recuperación de suministro activo
+                recuperacion = {
+                    'tipo': 'RECUPERAR_SUMINISTRO',
+                    'conductor_id': self.driver_id
+                }
+                self.producer.send('registro_conductores', recuperacion)
+                self.producer.flush()
+                time.sleep(2)
+            except Exception as e:
+                print(f"[ERROR] No se pudo registrar el conductor: {e}\n")
 
     def _init_kafka(self):
         try:
@@ -53,7 +84,6 @@ class EVDriver:
         while self.running:
             print("\n[INFO] Reintentando conexión con Kafka...\n")
             try:
-
                 if self.consumer:
                     self.consumer.close()
                 if self.producer:
@@ -90,8 +120,8 @@ class EVDriver:
 
     def _send_charging_request(self, cp_id):
         with self.lock:
-            if self.charging:
-                print("\n[ERROR] Ya existe una carga en curso. Espere a que finalice antes de iniciar otra.\n")
+            if self.charging or self.waiting_authorization:
+                print("\n[ERROR] Ya existe una carga en curso o esperando autorización. Espere a que finalice antes de iniciar otra.\n")
                 return
             
         print(f"\n[SOLICITUD] Enviando solicitud de carga al punto de carga: {cp_id}\n")
@@ -107,29 +137,67 @@ class EVDriver:
                 self._reconnect_kafka()
                 return
 
+            with self.lock:
+                self.waiting_authorization = True
+                
             self.producer.send('solicitudes_suministro', request)
             self.producer.flush()
             print("[OK] Solicitud enviada correctamente.\n")
         except Exception:
             print("\n[ERROR] No se pudo enviar la solicitud al broker Kafka.\n")
-            self._reconnect_kafka()
+            with self.lock:
+                self.waiting_authorization = False
 
     def _file_process(self, original_file):
+        # Esperar a que el registro esté completo
+        print("\n[INFO] Verificando registro del conductor...\n")
+        time.sleep(3)
+
         try:
             with open(original_file, 'r') as file:
                 requests = [line.strip() for line in file if line.strip()]
         except FileNotFoundError:
             print(f"\n[ERROR] No se encontró el archivo {original_file}. Verifique el nombre o la ruta.\n")
             return
-        
-        for i, cp_id in enumerate(requests, 1):
-            print(f"\n--- Procesando solicitud {i}/{len(requests)} ---\n")
-            self._send_charging_request(cp_id)
 
-            if i < len(requests):
-                time.sleep(4)
+        with self.lock:
+            self.file_processing = True
+            self.file_requests = requests
+            self.file_index = 0
+
+        print(f"\n[INFO] Procesando {len(requests)} solicitudes secuencialmente...\n")
+        self._process_next_file_request()
+
+    def _process_next_file_request(self):
+        with self.lock:
+            if not self.file_processing:
+                return
+
+            if self.file_index >= len(self.file_requests):
+                print("\n[INFO] Todas las solicitudes del archivo han sido procesadas.\n")
+                self.file_processing = False
+                return
+
+            cp_id = self.file_requests[self.file_index]
+            request_num = self.file_index + 1
+            total = len(self.file_requests)
+
+        print(f"\n--- Procesando solicitud {request_num}/{total} ---\n")
+
+        # Esperar hasta que no haya suministro activo ni esperando autorización
+        while True:
+            with self.lock:
+                if not self.charging and not self.waiting_authorization:
+                    break
+            print(f"[INFO] Esperando a que termine el suministro actual antes de procesar solicitud {request_num}/{total}...\n")
+            time.sleep(2)
+
+        self._send_charging_request(cp_id)
 
     def _display_stats(self):
+        if self.gui_mode:
+            return
+            
         print("\n[SUMINISTRO EN CURSO]\n")
         start_time = time.time()
         
@@ -144,7 +212,7 @@ class EVDriver:
             
             duration = int(time.time() - start_time)
             
-            if time.time() - last_data > 1:
+            if time.time() - last_data > 5:
                 print(f"\n[ERROR] No se reciben datos de telemetría del CP {cp}.\n"
                       f"[INFO] Finalizando suministro por inactividad...\n")
                 with self.lock:
@@ -197,7 +265,6 @@ class EVDriver:
 
         except Exception:
             print("\n[ERROR] No se pudo enviar la solicitud al broker Kafka.\n")
-            self._reconnect_kafka()
 
     ### UTILIDAD 
 
@@ -206,15 +273,29 @@ class EVDriver:
             if kmsg.get('autorizado', False):
                 print(f"\n[AUTORIZADO] {kmsg.get('mensaje', 'Suministro autorizado')}\n")
                 with self.lock:
-                    if self.charging: # Por si cae central para no volver a _display_stats
+                    if self.charging:
+                        self.waiting_authorization = False
                         return 
                     
                     self.charging = True
+                    self.waiting_authorization = False
                     self.current_cp = kmsg.get('cp_id')
                     self.last_telemetry_time = time.time()
                 threading.Thread(target=self._display_stats, daemon=True).start()
             else:
-                print(f"\n[DENEGADO] {kmsg.get('mensaje', 'Suministro denegado')}\n")
+                mensaje = kmsg.get('mensaje', 'Suministro denegado')
+                print(f"\n[DENEGADO] {mensaje}\n")
+
+                en_cola = 'En cola' in mensaje
+
+                with self.lock:
+                    if en_cola:
+                        print(f"[INFO] Permaneciendo en cola. Esperando autorización...\n")
+                    else:
+                        self.waiting_authorization = False
+                        if self.file_processing:
+                            self.file_index += 1
+                            threading.Thread(target=self._process_next_file_request, daemon=True).start()
 
         elif topic == 'telemetria_cp' and kmsg.get('conductor_id') == self.driver_id:
             with self.lock:
@@ -234,6 +315,11 @@ class EVDriver:
                 self.current_cp = None
                 self.current_consumption = 0
                 self.current_price = 0
+                
+                # Si estamos procesando archivo, continuar con siguiente
+                if self.file_processing:
+                    self.file_index += 1
+                    threading.Thread(target=self._process_next_file_request, daemon=True).start()
 
         elif topic == 'fin_suministro' and kmsg.get('conductor_id') == self.driver_id:
             print(f"\n[FIN SUMINISTRO] Finalizado en CP: {kmsg.get('cp_id')}\n")
@@ -248,6 +334,11 @@ class EVDriver:
                     self.current_cp = None
                     self.current_consumption = 0
                     self.current_price = 0
+                    
+                    # Si estamos procesando archivo, continuar con siguiente
+                    if self.file_processing:
+                        self.file_index += 1
+                        threading.Thread(target=self._process_next_file_request, daemon=True).start()
 
         elif topic == 'estado_cps':
             tipo = kmsg.get('tipo')
@@ -256,21 +347,125 @@ class EVDriver:
                 estado = kmsg.get('estado')
                 with self.lock:
                     self.cp_list[cp_id] = estado
+                
+                if self.gui_mode and self.gui and hasattr(self.gui, '_update_cp_list'):
+                    try:
+                        if hasattr(self.gui, 'root') and self.gui.root.winfo_exists():
+                            self.gui.root.after(0, self.gui._update_cp_list)
+                    except:
+                        pass
 
     ### DRIVER
 
+    def start(self):
+        if self.gui_mode:
+            self._start_with_gui()
+        else:
+            self._start_cli()
+
+    def _start_with_gui(self):
+        try:
+            from gui import EVDriverGUI
+            self.gui = EVDriverGUI(self)
+            
+            cli_thread = threading.Thread(target=self._start_cli, daemon=True)
+            cli_thread.start()
+            
+            try:
+                self.gui.run()
+            except:
+                pass
+        except ImportError:
+            print("\n[ERROR] No se pudo importar el módulo GUI. Asegúrese de que driver_gui.py existe.")
+            print("[INFO] Cambiando a modo CLI...\n")
+            self.gui_mode = False
+            self._start_cli()
+        except Exception as e:
+            print(f"\n[ERROR] Error al iniciar GUI: {e}")
+            print("[INFO] Cambiando a modo CLI...\n")
+            self.gui_mode = False
+            self._start_cli()
+
+    def _start_cli(self):
+        if self.gui_mode:
+            time.sleep(0.5)
+            
+        print(f"=== Conductor: {self.driver_id} ===\n")
+        print("Comandos disponibles:\n"
+              "  <CP_ID>       - Solicitar suministro en punto de carga\n"
+              "  lista         - Ver puntos de carga disponibles\n"
+              "  file          - Procesar solicitudes desde suministros.txt\n"
+              "  file <nombre> - Procesar solicitudes desde archivo específico\n"
+              "  salir         - Salir de la aplicación\n")
+
+        while self.running:
+            try:
+                u_input = input("> ").strip()
+
+                if not u_input:
+                    continue
+                if u_input.lower() == 'salir':
+                    if self.gui_mode and self.gui:
+                        try:
+                            self.gui.root.after(0, self.gui.root.destroy)
+                        except:
+                            pass
+                    break
+                elif u_input.lower() == 'lista':
+                    self._request_cp_list()
+                    self._list_cps()
+                elif u_input.lower() == 'file':
+                    self._file_process("suministros.txt")
+                elif u_input.lower().startswith('file '):
+                    parts = u_input.split(maxsplit=1)
+                    if len(parts) > 1:
+                        filename = parts[1].strip()
+                        self._file_process(filename)
+                    else:
+                        print("\n[ERROR] Formato incorrecto. Use: file <nombre_archivo>\n")
+                else:
+                    self._send_charging_request(u_input.upper())
+                    
+            except (EOFError, KeyboardInterrupt):
+                if self.gui_mode and self.gui:
+                    try:
+                        self.gui.root.after(0, self.gui.root.destroy)
+                    except:
+                        pass
+                break
+            except Exception:
+                print("\n[ERROR] Se produjo un error inesperado al procesar el comando.\n")
+        
+        if not self.gui_mode:
+            self.end()
+
     def end(self):
         print("\n[INFO] Cerrando aplicación...\n")
+
+        # Desregistrar conductor ANTES de cambiar running a False
+        if self.producer:
+            try:
+                desregistro = {
+                    'tipo': 'DESCONECTAR',
+                    'conductor_id': self.driver_id
+                }
+                self.producer.send('registro_conductores', desregistro)
+                self.producer.flush()
+                time.sleep(2)
+                print(f"[DESREGISTRO] Conductor {self.driver_id} desconectado del sistema\n")
+            except Exception as e:
+                print(f"[ERROR] No se pudo desregistrar el conductor: {e}\n")
+
         self.running = False
-        
+
         try:
             self.consumer.wakeup()
         except:
             pass
-            
+
         if self.thread.is_alive():
             self.thread.join(timeout=2)
-        
+
         try:
             if self.consumer:
                 self.consumer.close()
@@ -279,47 +474,20 @@ class EVDriver:
         except:
             pass
 
-    def start(self):
-        print(f"=== Conductor: {self.driver_id} ===\n")
-        print("Comandos disponibles:\n"
-              "  <CP_ID>  - Solicitar suministro en punto de carga\n"
-              "  lista    - Ver puntos de carga disponibles\n"
-              "  file     - Procesar solicitudes desde suministros.txt\n"
-              "  salir    - Salir de la aplicación\n")
-
-        while True:
-            try:
-                u_input = input("> ").strip()
-
-                if not u_input:
-                    continue
-                if u_input.lower() == 'salir':
-                    break
-                elif u_input.lower() == 'lista':
-                    self._request_cp_list()
-                    self._list_cps()
-                elif u_input.lower() == 'file':
-                    self._file_process("suministros.txt")
-                else:
-                    self._send_charging_request(u_input.upper())
-                    
-            except (EOFError, KeyboardInterrupt):
-                break
-            except Exception:
-                print("\n[ERROR] Se produjo un error inesperado al procesar el comando.\n")
-        
-        self.end()
 
 def main():
     if len(sys.argv) < 3:
-        print("\nUso: python main.py [ip_broker:port_broker] <driver_id>\n"
-              "Ejemplo: python main.py localhost:9092 DRV001\n")
+        print("\nUso: python main.py [ip_broker:port_broker] <driver_id> [--gui]\n"
+              "Ejemplo CLI: python main.py localhost:9092 DRV001\n"
+              "Ejemplo GUI: python main.py localhost:9092 DRV001 --gui\n")
         sys.exit(1)
 
     broker = sys.argv[1]
     driver_id = sys.argv[2]
+    
+    gui_mode = '--gui' in sys.argv or '-g' in sys.argv
 
-    driver = EVDriver(broker, driver_id)
+    driver = EVDriver(broker, driver_id, gui_mode=gui_mode)
     time.sleep(1)
     driver.start()
 

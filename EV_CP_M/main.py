@@ -162,8 +162,8 @@ class EVChargingPointMonitor:
                 self.engine_client.connect((self.engine_ip, self.engine_port))
                 self._log(f"[MONITOR] Conectado a ENGINE {self.engine_ip}:{self.engine_port}")
                 return True
-            except Exception as e:
-                self._log(f"[ERROR] No se pudo conectar a ENGINE: {e}")
+            except Exception:
+                self._log(f"[ERROR] No se pudo conectar a ENGINE")
                 time.sleep(2)
         return False
 

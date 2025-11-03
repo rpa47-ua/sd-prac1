@@ -39,6 +39,7 @@ class EVChargingPointEngine:
         self.gui_mode = gui_mode
         self.gui = None
 
+        self.central_status = False
         self.breakdown_status = False
         self.charging = False
         self.running = True
@@ -72,7 +73,8 @@ class EVChargingPointEngine:
                 enable_auto_commit=True
             )
 
-            self.consumer.subscribe(['respuestas_cp', 'respuestas_conductor', 'solicitud_estado_engine'])
+            self.consumer.subscribe(['respuestas_cp', 'respuestas_conductor', 'solicitud_estado_engine', 'estado_central'])
+
             self._log("OK", f"Conectado a Kafka en {self.broker}")
         except Exception:
             self._log("ERROR", "No se pudo establecer conexión con Kafka. Verifique el broker o la red.")
@@ -106,8 +108,12 @@ class EVChargingPointEngine:
                 for tp, msgs in records.items():
                     for msg in msgs:
                         kmsg = msg.value
+
+                        if msg.topic == "estado_central":
+                            with self.lock:
+                                self.central_status = kmsg.get('estado', False)
                         if msg.topic == 'solicitud_estado_engine':
-                            self._handle_estado_solicitud(kmsg)
+                            self._handle_engine_state(kmsg)
                         elif msg.topic in ['respuestas_cp', 'respuestas_conductor'] and kmsg.get('cp_id') == self.cp_id:
                             self._handle_authorization_response(kmsg)
             except Exception:
@@ -171,8 +177,7 @@ class EVChargingPointEngine:
 
     ### SUMINISTRO Y FUNCIONALIDADES
 
-    def _handle_estado_solicitud(self, kmsg):
-        """Responde a solicitud de Central con el estado actual del suministro"""
+    def _handle_engine_state(self, kmsg):
         if kmsg.get('tipo') == 'SOLICITAR_ESTADO':
             with self.lock:
                 if self.charging and self.current_driver and self.current_supply_id:
@@ -419,14 +424,17 @@ class EVChargingPointEngine:
                             if self.charging:
                                 self._log("INFO", "El punto de carga ya está suministrando energía.")
                             else:
-                                self._log("EVENTO", f"Solicitud de suministro enviada para conductor {driver_id}.")
-                                request = {'conductor_id': driver_id, 'cp_id': self.cp_id, 'origen': 'CP'}
-                                try:
-                                    self.producer.send('solicitudes_suministro', request)
-                                    self.producer.flush()
-                                except Exception:
-                                    self._log("ERROR", "Kafka no disponible. Reintentando conexión.")
-                                    self._reconnect_kafka()
+                                if not self.central_status:
+                                    self._log("ERROR", "Imposible conectar con la Central")
+                                else:
+                                    self._log("EVENTO", f"Solicitud de suministro enviada para conductor {driver_id}.")
+                                    request = {'conductor_id': driver_id, 'cp_id': self.cp_id, 'origen': 'CP'}
+                                    try:
+                                        self.producer.send('solicitudes_suministro', request)
+                                        self.producer.flush()
+                                    except Exception:
+                                        self._log("ERROR", "Kafka no disponible. Reintentando conexión.")
+                                        self._reconnect_kafka()
                     else:
                         self._log("ERROR", "Formato incorrecto. Use: S <ID_CONDUCTOR>")
                 else:
@@ -447,7 +455,6 @@ class EVChargingPointEngine:
     def end(self):
         self._log("INFO", "Cerrando aplicación...")
         
-        # Si hay suministro activo, finalizarlo
         with self.lock:
             if self.charging and self.current_driver and self.current_supply_id:
                 driver_id = self.current_driver
@@ -455,7 +462,6 @@ class EVChargingPointEngine:
                 self._log("INFO", "Finalizando suministro activo antes de cerrar...")
                 self.charging = False
         
-        # Dar tiempo para que se complete el suministro
         time.sleep(2)
         
         self.running = False

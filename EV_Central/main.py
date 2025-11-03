@@ -98,7 +98,7 @@ class EVCentral:
             'solicitudes_suministro', 'respuestas_conductor', 'respuestas_cp',
             'comandos_cp', 'telemetria_cp', 'fin_suministro', 'averias',
             'recuperacion_cp', 'tickets', 'notificaciones', 'estado_cps',
-            'registro_conductores', 'solicitud_estado_engine', 'respuesta_estado_engine'
+            'registro_conductores', 'solicitud_estado_engine', 'respuesta_estado_engine', 'estado_central'
         ]
         self.kafka.crear_topics_si_no_existen(all_topics)
 
@@ -128,6 +128,8 @@ class EVCentral:
         print("SISTEMA INICIADO CORRECTAMENTE")
         print("=" * 60 + "\n")
 
+        self.kafka.producer.send('estado_central', {'estado': True})
+
         return True
 
     def ejecutar(self):
@@ -154,6 +156,7 @@ class EVCentral:
     def detener(self):
         """Detiene todos los componentes del sistema"""
         self.running = False
+        self.kafka.producer.send('estado_central', {'estado': False})
 
         if self.panel:
             self.panel.detener()

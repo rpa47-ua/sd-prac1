@@ -11,6 +11,7 @@ class EVDriver:
         self.gui_mode = gui_mode
         self.gui = None
 
+        self.central_status = False
         self.charging = False
         self.running = True
         self.current_cp = None
@@ -22,19 +23,19 @@ class EVDriver:
         self.file_processing = False
         self.file_requests = []
         self.file_index = 0
+        self.central_status = False
 
         self.lock = threading.Lock()
 
         self._init_kafka()
-        self._registrar_conductor()
+        self._driver_register()
 
         self.thread = threading.Thread(target=self._listen_kafka, daemon=True)
         self.thread.start()
 
     ### KAFKA
 
-    def _registrar_conductor(self):
-        """Registra el conductor en el sistema al iniciar"""
+    def _driver_register(self):
         if self.producer:
             try:
                 registro = {
@@ -72,7 +73,7 @@ class EVDriver:
                 enable_auto_commit=True
             )
 
-            self.consumer.subscribe(['respuestas_conductor', 'telemetria_cp', 'tickets', 'notificaciones', 'fin_suministro', 'estado_cps'])
+            self.consumer.subscribe(['respuestas_conductor', 'telemetria_cp', 'tickets', 'notificaciones', 'fin_suministro', 'estado_cps', 'estado_central'])
 
             print(f"\n[OK] Conectado a Kafka en {self.broker}\n")
         except Exception:
@@ -120,6 +121,9 @@ class EVDriver:
 
     def _send_charging_request(self, cp_id):
         with self.lock:
+            if not self.central_status:
+                print("\n[ERROR] Imposible conectar con la Central\n")
+                return
             if self.charging or self.waiting_authorization:
                 print("\n[ERROR] Ya existe una carga en curso o esperando autorización. Espere a que finalice antes de iniciar otra.\n")
                 return
@@ -269,7 +273,10 @@ class EVDriver:
     ### UTILIDAD 
 
     def _process_message(self, topic, kmsg):
-        if topic == 'respuestas_conductor' and kmsg.get('conductor_id') == self.driver_id:
+        if topic == "estado_central":
+            with self.lock:
+                self.central_status = kmsg.get('estado', False)
+        elif topic == 'respuestas_conductor' and kmsg.get('conductor_id') == self.driver_id:
             if kmsg.get('autorizado', False):
                 print(f"\n[AUTORIZADO] {kmsg.get('mensaje', 'Suministro autorizado')}\n")
                 with self.lock:
@@ -299,10 +306,9 @@ class EVDriver:
 
         elif topic == 'telemetria_cp' and kmsg.get('conductor_id') == self.driver_id:
             with self.lock:
-                if self.charging:
-                    self.current_consumption = kmsg.get('consumo_actual', 0)
-                    self.current_price = kmsg.get('importe_actual', 0)
-                    self.last_telemetry_time = time.time()
+                self.current_consumption = kmsg.get('consumo_actual', 0)
+                self.current_price = kmsg.get('importe_actual', 0)
+                self.last_telemetry_time = time.time()
 
         elif topic == 'tickets' and kmsg.get('conductor_id') == self.driver_id:
             print(f"\n[TICKET FINAL]\n"
@@ -478,7 +484,7 @@ class EVDriver:
 def main():
     if len(sys.argv) < 3:
         print("\nUso: python main.py [ip_broker:port_broker] <driver_id> [--gui]\n"
-              "Ejemplo CLI: python main.py localhost:9092 DRV001\n"
+              "Ejemplo CLI:     \n"
               "Ejemplo GUI: python main.py localhost:9092 DRV001 --gui\n")
         sys.exit(1)
 
