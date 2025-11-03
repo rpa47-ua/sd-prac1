@@ -4,6 +4,7 @@ import time
 import socket
 import threading
 import random
+import os
 from kafka import KafkaProducer, KafkaConsumer
 
 FORMAT = 'utf-8'
@@ -38,6 +39,7 @@ class EVChargingPointEngine:
         self.monitor_port = int(monitor_port)
         self.gui_mode = gui_mode
         self.gui = None
+        self.state_file = f"engine_state_{cp_id}.json"
 
         self.central_status = False
         self.breakdown_status = False
@@ -45,6 +47,8 @@ class EVChargingPointEngine:
         self.running = True
         self.current_driver = None
         self.current_supply_id = None
+        self.consumed_kwh = 0.0
+        self.total_price = 0.0
 
         self.kWH = abs(1 - random.random())
         self.price = abs(1 - random.random())
@@ -61,6 +65,72 @@ class EVChargingPointEngine:
         self.consumer = None
         self._init_kafka()
         self._init_monitor()
+
+        # Recuperar estado previo si existe (después de inicializar Kafka)
+        self._load_state()
+
+    ### PERSISTENCIA DE ESTADO
+    def _save_state(self):
+        """Guarda el estado actual del suministro en un archivo"""
+        try:
+            with self.lock:
+                state = {
+                    'charging': self.charging,
+                    'current_driver': self.current_driver,
+                    'current_supply_id': self.current_supply_id,
+                    'consumed_kwh': self.consumed_kwh,
+                    'total_price': self.total_price
+                }
+            with open(self.state_file, 'w') as f:
+                json.dump(state, f)
+        except Exception:
+            pass
+
+    def _load_state(self):
+        """Carga el estado previo del suministro si existe y envía fin_suministro"""
+        try:
+            if os.path.exists(self.state_file):
+                with open(self.state_file, 'r') as f:
+                    state = json.load(f)
+                if state.get('charging', False):
+                    driver_id = state.get('current_driver')
+                    supply_id = state.get('current_supply_id')
+                    consumed = state.get('consumed_kwh', 0.0)
+                    price = state.get('total_price', 0.0)
+                    print(f"[RECUPERACIÓN] Suministro interrumpido detectado: Driver={driver_id}, ID={supply_id}")
+                    print(f"[RECUPERACIÓN] Consumo hasta cierre: {consumed:.2f} kWh, Importe: {price:.2f} EUR")
+
+                    # Esperar a que Kafka esté listo antes de enviar
+                    time.sleep(2)
+
+                    # Enviar fin_suministro con los datos recuperados
+                    end_msg = {
+                        'conductor_id': driver_id,
+                        'cp_id': self.cp_id,
+                        'suministro_id': supply_id,
+                        'consumo_kwh': round(consumed, 2),
+                        'importe_total': round(price, 2)
+                    }
+                    try:
+                        if self.producer:
+                            self.producer.send('fin_suministro', end_msg)
+                            self.producer.flush()
+                            print(f"[RECUPERACIÓN] Fin de suministro enviado a Central tras recuperación")
+                    except Exception:
+                        print(f"[ERROR] No se pudo enviar fin_suministro tras recuperación")
+
+                # Eliminar el archivo después de procesar
+                os.remove(self.state_file)
+        except Exception:
+            pass
+
+    def _clear_state(self):
+        """Elimina el archivo de estado"""
+        try:
+            if os.path.exists(self.state_file):
+                os.remove(self.state_file)
+        except Exception:
+            pass
 
     ### MÉTODO DE LOG ÚNICO
     def _log(self, level, msg, status=False, end="\n"):
@@ -201,6 +271,12 @@ class EVChargingPointEngine:
                         else:
                             status = "OK"
                     send(status, conn)
+                elif msg == "STOP":
+                    with self.lock:
+                        if self.charging:
+                            self.charging = False
+                            self._log("EVENTO", "Suministro detenido por cierre del Monitor")
+                    send("OK", conn)
         except Exception:
             self._log("ERROR", f"Problema con el monitor {addr}")
         finally:
@@ -297,6 +373,15 @@ class EVChargingPointEngine:
                     break
             consumed_kwh += self.kWH
             total_price = consumed_kwh * self.price
+
+            # Actualizar variables de instancia para guardar estado
+            with self.lock:
+                self.consumed_kwh = consumed_kwh
+                self.total_price = total_price
+
+            # Guardar estado periódicamente
+            self._save_state()
+
             telemetry = {'cp_id': self.cp_id, 'conductor_id': driver_id, 'consumo_actual': round(consumed_kwh, 2), 'importe_actual': round(total_price, 2)}
             try:
                 self.producer.send('telemetria_cp', telemetry)
@@ -304,18 +389,34 @@ class EVChargingPointEngine:
             except Exception:
                 pass
             time.sleep(1)
-        if not self.breakdown_status:
-            end_msg = {'conductor_id': driver_id, 'cp_id': self.cp_id, 'suministro_id': self.current_supply_id, 'consumo_kwh': round(consumed_kwh, 2), 'importe_total': round(total_price, 2)}
+
+        # Verificar si se está cerrando el Engine
+        if not self.running:
+            self._log("INFO", "Engine cerrando. Estado guardado para recuperación.")
+            # El estado ya está guardado, se enviará fin_suministro al reiniciar
+        elif not self.breakdown_status:
+            # Suministro finalizado normalmente (comando F)
+            end_msg = {'conductor_id': driver_id, 'cp_id': self.cp_id, 'suministro_id': supply_id, 'consumo_kwh': round(consumed_kwh, 2), 'importe_total': round(total_price, 2)}
             try:
                 self.producer.send('fin_suministro', end_msg)
                 self.producer.flush()
                 self._log("OK", "Fin de suministro comunicado a la central.")
             except Exception:
                 self._log("ERROR", "No se pudo comunicar el fin de suministro.")
+            self._clear_state()
+
         with self.lock:
             self.charging = False
-            self.current_driver = None
-            self.current_supply_id = None
+            if not self.running:
+                # Mantener datos para recuperación
+                pass
+            else:
+                # Limpiar solo si finalizó normalmente
+                self.current_driver = None
+                self.current_supply_id = None
+                self.consumed_kwh = 0.0
+                self.total_price = 0.0
+
         self._log("EVENTO", f"Suministro finalizado. Consumo total {consumed_kwh:.2f} kWh | Total {total_price:.2f} EUR")
 
     ### DISPLAY
@@ -420,11 +521,14 @@ class EVChargingPointEngine:
 
     def end(self):
         self._log("INFO", "Cerrando aplicación...")
-        with self.lock:
-            if self.charging:
-                self.charging = False
-        time.sleep(1)
+
+        # Primero detener el running para que los hilos sepan que deben parar
         self.running = False
+
+        # Esperar a que el hilo de suministro termine (si hay uno activo)
+        # NO tocar self.charging para que el hilo de _supply lo maneje correctamente
+        time.sleep(2)
+
         try:
             if self.consumer:
                 self.consumer.close()

@@ -341,10 +341,12 @@ class EVDriver:
                 self.current_cp = None
                 self.current_consumption = 0
                 self.current_price = 0
-                
+
                 # Si estamos procesando archivo, continuar con siguiente
                 if self.file_processing:
                     self.file_index += 1
+                    # Esperar 4 segundos para que el CP se libere en la Central
+                    time.sleep(4)
                     threading.Thread(target=self._process_next_file_request, daemon=True).start()
 
         elif topic == 'fin_suministro' and kmsg.get('conductor_id') == self.driver_id:

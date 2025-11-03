@@ -1,13 +1,6 @@
-#!/usr/bin/env python3
-"""
-EV_Central - Sistema Central de Gestión de Red de Carga de Vehículos Eléctricos
+# Módulo principal de EV_Central: Coordina todos los componentes del sistema central
+# Inicializa BD, Kafka, servidor socket, lógica de negocio y GUI de monitorización
 
-Uso:
-    python main.py <puerto_socket> <kafka_broker> [db_host:db_port]
-
-Ejemplo:
-    python main.py 5000 localhost:9092 localhost:3306
-"""
 import sys
 import time
 import signal
@@ -25,7 +18,6 @@ class EVCentral:
         self.db_host = db_host
         self.db_port = db_port
 
-        # Componentes del sistema
         self.db = None
         self.kafka = None
         self.servidor = None
@@ -35,12 +27,10 @@ class EVCentral:
         self.running = False
 
     def inicializar(self):
-        """Inicializa todos los componentes del sistema"""
         print("\n" + "=" * 60)
         print("EV_CENTRAL - Sistema de Gestion de Red de Carga")
         print("=" * 60 + "\n")
 
-        # 1. Conectar a la base de datos
         print("Conectando a la base de datos...")
         self.db = Database(
             host=self.db_host,
@@ -54,11 +44,9 @@ class EVCentral:
             print("[ERROR] Error critico: No se pudo conectar a la BD")
             return False
 
-        # Marcar todos los CPs como desconectados al arrancar
         print("\nMarcando todos los CPs como desconectados...")
         self.db.marcar_todos_cps_desconectados()
 
-        # 2. Inicializar Kafka
         print("\nInicializando Kafka...")
         self.kafka = KafkaHandler(self.kafka_broker)
 
@@ -70,29 +58,25 @@ class EVCentral:
             print("[ERROR] Error critico: No se pudo inicializar consumidor Kafka")
             return False
 
-        # 3. Iniciar servidor socket (antes de lógica de negocio)
         print(f"\nIniciando servidor socket en puerto {self.puerto_socket}...")
         self.servidor = ServidorSocket(
             self.puerto_socket,
-            None,  # callback_autenticacion (se configurará después)
-            None,  # callback_desconexion (se configurará después)
-            None   # callback_estado (se configurará después)
+            None,
+            None,
+            None
         )
 
         if not self.servidor.iniciar():
             print("[ERROR] Error critico: No se pudo iniciar servidor socket")
             return False
 
-        # 4. Inicializar lógica de negocio (con referencia al servidor socket)
         print("\nInicializando logica de negocio...")
         self.logica = LogicaNegocio(self.db, self.kafka, self.servidor)
 
-        # 5. Configurar callbacks del servidor socket ahora que tenemos la lógica
         self.servidor.callback_autenticacion = self.logica.autenticar_cp
         self.servidor.callback_desconexion = self.logica.manejar_desconexion_monitor
         self.servidor.callback_estado = self.logica.procesar_estado_engine
 
-        # 6. Crear topics de Kafka si no existen
         print("\nCreando topics de Kafka...")
         all_topics = [
             'solicitudes_suministro', 'respuestas_conductor', 'respuestas_cp',
@@ -102,7 +86,6 @@ class EVCentral:
         ]
         self.kafka.crear_topics_si_no_existen(all_topics)
 
-        # 7. Configurar callbacks de Kafka
         print("\nConfigurando callbacks de Kafka...")
         self.kafka.registrar_callback('solicitudes_suministro', self.logica.procesar_solicitud_suministro)
         self.kafka.registrar_callback('telemetria_cp', self.logica.procesar_telemetria_cp)
@@ -116,11 +99,9 @@ class EVCentral:
         topics = ['solicitudes_suministro', 'telemetria_cp', 'fin_suministro', 'averias', 'recuperacion_cp', 'estado_cps', 'registro_conductores', 'respuesta_estado_engine']
         self.kafka.suscribirse(topics)
 
-        # 8. Recuperar suministros activos y enviar tickets pendientes
         print("\nRecuperando suministros del sistema...")
         self.logica.recuperar_suministros_al_inicio()
 
-        # 9. Iniciar panel de monitorizacion GUI
         print("\nInicializando panel de monitorizacion GUI...")
         self.panel = PanelGUI(self.logica)
 
@@ -134,19 +115,16 @@ class EVCentral:
         return True
 
     def ejecutar(self):
-        """Ejecuta el bucle principal del sistema"""
         self.running = True
 
-        # Iniciar consumidor de Kafka en segundo plano
         self.kafka.iniciar_consumidor_async()
 
         print("Sistema en funcionamiento.")
         print("[INFO] Los Monitores se reconectarán automáticamente y enviarán sus estados actuales")
         print("Abriendo panel de monitorizacion GUI...\n")
 
-        # Iniciar GUI (bloqueante - usa mainloop de Tkinter)
         try:
-            self.panel.iniciar()  # Esto bloquea hasta que se cierre la ventana
+            self.panel.iniciar()
 
         except KeyboardInterrupt:
             print("\n\nDeteniendo sistema...")
@@ -155,7 +133,6 @@ class EVCentral:
             self.detener()
 
     def detener(self):
-        """Detiene todos los componentes del sistema"""
         self.running = False
         self.kafka.producer.send('estado_central', key=b'central', value={'estado': False})
         self.kafka.producer.flush
@@ -176,7 +153,6 @@ class EVCentral:
 
 
 def main():
-    """Función principal"""
     if len(sys.argv) < 3:
         print("Uso: python main.py <puerto_socket> <kafka_broker> [db_host:db_port]")
         print("Ejemplo: python main.py 5000 localhost:9092 localhost:3306")
@@ -185,7 +161,6 @@ def main():
     puerto_socket = int(sys.argv[1])
     kafka_broker = sys.argv[2]
 
-    # Parsear DB host y puerto (opcional)
     db_host = 'localhost'
     db_port = 3306
 
@@ -195,7 +170,6 @@ def main():
         if len(db_parts) > 1:
             db_port = int(db_parts[1])
 
-    # Crear y ejecutar sistema central
     central = EVCentral(puerto_socket, kafka_broker, db_host, db_port)
 
     if central.inicializar():

@@ -1,4 +1,6 @@
-"""Gestión de base de datos para EV_Central"""
+# Módulo de gestión de base de datos: Maneja conexiones MySQL y operaciones CRUD
+# Usa pool de conexiones para soportar concurrencia en CPs, conductores y suministros
+
 import pymysql
 from typing import List, Dict, Optional
 from dbutils.pooled_db import PooledDB
@@ -15,13 +17,12 @@ class Database:
 
     def conectar(self):
         try:
-            # Crear pool de conexiones (en lugar de una sola conexión)
             self.pool = PooledDB(
                 creator=pymysql,
-                maxconnections=20,  # Máximo 20 conexiones simultáneas
-                mincached=2,        # Mínimo 2 conexiones en cache
-                maxcached=10,       # Máximo 10 conexiones en cache
-                blocking=True,      # Bloquear si no hay conexiones disponibles
+                maxconnections=20,
+                mincached=2,
+                maxcached=10,
+                blocking=True,
                 host=self.host,
                 port=self.port,
                 user=self.user,
@@ -44,7 +45,6 @@ class Database:
             print("[OK] Connection pool cerrado")
 
     def _get_connection(self):
-        """Obtiene una conexión del pool"""
         if not self.pool:
             raise Exception("Pool de conexiones no inicializado")
         return self.pool.connection()
@@ -57,7 +57,7 @@ class Database:
                     cursor.execute("SELECT * FROM charging_points")
                     return cursor.fetchall()
             finally:
-                conn.close()  # Devolver al pool
+                conn.close()
         except Exception as e:
             print(f"Error obteniendo CPs: {e}")
             return []
@@ -76,10 +76,6 @@ class Database:
             return None
 
     def registrar_cp(self, cp_id: str):
-        """
-        Registra un nuevo Charging Point en BBDD
-        El CP envía sus propios datos (coordenadas, precio) directamente
-        """
         try:
             conn = self._get_connection()
             try:
@@ -122,7 +118,6 @@ class Database:
             return None
 
     def registrar_conductor(self, conductor_id: str, conectado: bool = True):
-        """Registra un conductor en BBDD"""
         try:
             conn = self._get_connection()
             try:
@@ -138,7 +133,6 @@ class Database:
             return False
 
     def actualizar_estado_conductor(self, conductor_id: str, conectado: bool):
-        """Actualiza el estado de conexión de un conductor"""
         try:
             conn = self._get_connection()
             try:
@@ -209,7 +203,6 @@ class Database:
             return None
 
     def obtener_suministro_activo_conductor(self, conductor_id: str) -> Optional[Dict]:
-        """Obtiene el suministro activo de un conductor específico"""
         try:
             conn = self._get_connection()
             try:
@@ -224,7 +217,6 @@ class Database:
             return None
 
     def obtener_suministros_activos(self) -> List[Dict]:
-        """Obtiene todos los suministros activos (para recuperación tras reinicio)"""
         try:
             conn = self._get_connection()
             try:
@@ -240,7 +232,6 @@ class Database:
             return []
 
     def marcar_todos_cps_desconectados(self):
-        """Marca todos los CPs como desconectados (usado al arrancar Central)"""
         try:
             conn = self._get_connection()
             try:
@@ -256,12 +247,10 @@ class Database:
             return False
 
     def obtener_suministros_pendientes_ticket(self) -> List[Dict]:
-        """Obtiene suministros finalizados sin ticket enviado"""
         try:
             conn = self._get_connection()
             try:
                 with conn.cursor() as cursor:
-                    # Verificar si la columna ticket_enviado existe
                     cursor.execute("SHOW COLUMNS FROM suministros LIKE 'ticket_enviado'")
                     if cursor.fetchone():
                         cursor.execute("""SELECT * FROM suministros
@@ -269,7 +258,6 @@ class Database:
                                          ORDER BY fecha_fin DESC""")
                         return cursor.fetchall()
                     else:
-                        # Si no existe la columna, asumir que ningún ticket ha sido enviado
                         print("[INFO] Columna ticket_enviado no existe. Recrear BD con nuevo schema.")
                         return []
             finally:
@@ -279,12 +267,10 @@ class Database:
             return []
 
     def marcar_ticket_enviado(self, suministro_id: int):
-        """Marca un suministro como ticket enviado"""
         try:
             conn = self._get_connection()
             try:
                 with conn.cursor() as cursor:
-                    # Verificar si la columna existe antes de actualizar
                     cursor.execute("SHOW COLUMNS FROM suministros LIKE 'ticket_enviado'")
                     if cursor.fetchone():
                         cursor.execute("UPDATE suministros SET ticket_enviado = TRUE WHERE id = %s", (suministro_id,))

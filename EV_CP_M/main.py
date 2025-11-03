@@ -236,15 +236,24 @@ class EVChargingPointMonitor:
 
     def _cleanup(self):
         self._log("\n[MONITOR] Cerrando conexiones...")
-        
-        # Si hay suministro activo, notificar a Central que el monitor se cierra
+
+        # Si hay suministro activo, detener el Engine y notificar a Central
         with self.lock:
             if self.last_status == "SUMINISTRANDO":
-                self._log("[MONITOR] Suministro activo detectado al cerrar. Notificando a Central...")
+                self._log("[MONITOR] Suministro activo detectado al cerrar. Deteniendo Engine...")
+                # Enviar comando STOP al Engine para detener el suministro
+                if self.engine_client:
+                    try:
+                        send("STOP", self.engine_client)
+                        recv(self.engine_client)  # Esperar confirmación
+                        self._log("[MONITOR] Engine detenido correctamente")
+                    except:
+                        self._log("[ERROR] No se pudo enviar comando STOP al Engine")
+
                 # Notificar avería para que Central finalice el suministro
                 self._notify_central("AVERIA")
                 time.sleep(1)
-        
+
         self.running = False
         if self.engine_client:
             try: self.engine_client.close()
