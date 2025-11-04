@@ -134,11 +134,6 @@ class EVChargingPointEngine:
 
     ### MÉTODO DE LOG ÚNICO
     def _log(self, level, msg, status=False, end="\n"):
-        """
-        Método unificado de logging.
-        Si status=True -> muestra línea de estado dinámica (una sola línea que se actualiza).
-        Si status=False -> imprime un log normal, gestionando la línea de estado activa.
-        """
         with self.print_lock:
             if status:
                 # Línea dinámica (estado en curso)
@@ -149,18 +144,23 @@ class EVChargingPointEngine:
                 sys.stdout.write(text)
                 sys.stdout.flush()
             else:
-                # Limpia línea de estado antes de escribir log
-                if self._status_active:
+                # Para mensajes de finalización, hacer salto de línea primero
+                if self._status_active and level in ['EVENTO', 'ERROR', 'INFO'] and any(word in msg for word in ['finalizado', 'interrumpido', 'detenido', 'comunicada']):
+                    sys.stdout.write('\n')  # Salto de línea antes del mensaje
+                    sys.stdout.flush()
+                    self._status_active = False  # Desactivar estado
+                # Para otros mensajes, limpiar la línea
+                elif self._status_active:
                     sys.stdout.write('\r' + ' ' * self._status_length + '\r')
                     sys.stdout.flush()
+                    self._status_active = False
 
                 print(f"[{level}] {msg}", end=end, flush=True)
 
-                # Redibuja línea de estado si está activa
-                if self._status_active:
+                # NO redibujar línea de estado después de mensajes de finalización
+                if self._status_active and level not in ['EVENTO', 'ERROR', 'INFO']:
                     sys.stdout.write(self._status_text)
                     sys.stdout.flush()
-
     ### KAFKA
 
     def _init_kafka(self):
@@ -256,7 +256,7 @@ class EVChargingPointEngine:
             self.monitor = None
 
     def _handle_monitor(self, conn, addr):
-        self._log("INFO", f"Monitor conectado desde {addr[0]}:{addr[1]}")
+        self._log("INFO", f"Monitor conectado")
         try:
             while self.running:
                 msg = recv(conn)
@@ -284,7 +284,7 @@ class EVChargingPointEngine:
                 conn.close()
             except:
                 pass
-            self._log("INFO", f"Monitor desconectado: {addr[0]}:{addr[1]}")
+            self._log("INFO", f"Monitor desconectado")
 
     def _listen_monitor(self):
         while self.running:
@@ -400,7 +400,6 @@ class EVChargingPointEngine:
             try:
                 self.producer.send('fin_suministro', end_msg)
                 self.producer.flush()
-                self._log("OK", "Fin de suministro comunicado a la central.")
             except Exception:
                 self._log("ERROR", "No se pudo comunicar el fin de suministro.")
             self._clear_state()
@@ -436,7 +435,6 @@ class EVChargingPointEngine:
             status_text = f"CP {cp} | Conductor {driver} | Tiempo {duration}s | Consumo {consumed_kwh:.2f} kWh | Total {total_price:.2f} EUR"
             self._log("", status_text, status=True)
             time.sleep(1)
-        self._log("", "", status=True, end="\n")
 
     ### ENGINE
     def start(self):
