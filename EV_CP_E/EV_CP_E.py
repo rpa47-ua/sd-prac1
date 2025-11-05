@@ -56,7 +56,6 @@ class EVChargingPointEngine:
         self.lock = threading.Lock()
         self.print_lock = threading.Lock()
 
-        # Variables de línea de estado
         self._status_active = False
         self._status_text = ""
         self._status_length = 0
@@ -66,12 +65,11 @@ class EVChargingPointEngine:
         self._init_kafka()
         self._init_monitor()
 
-        # Recuperar estado previo si existe (después de inicializar Kafka)
         self._load_state()
 
     ### PERSISTENCIA DE ESTADO
+
     def _save_state(self):
-        """Guarda el estado actual del suministro en un archivo"""
         try:
             with self.lock:
                 state = {
@@ -87,7 +85,6 @@ class EVChargingPointEngine:
             pass
 
     def _load_state(self):
-        """Carga el estado previo del suministro si existe y envía fin_suministro"""
         try:
             if os.path.exists(self.state_file):
                 with open(self.state_file, 'r') as f:
@@ -100,10 +97,8 @@ class EVChargingPointEngine:
                     print(f"[RECUPERACIÓN] Suministro interrumpido detectado: Driver={driver_id}, ID={supply_id}")
                     print(f"[RECUPERACIÓN] Consumo hasta cierre: {consumed:.2f} kWh, Importe: {price:.2f} EUR")
 
-                    # Esperar a que Kafka esté listo antes de enviar
                     time.sleep(2)
 
-                    # Enviar fin_suministro con los datos recuperados
                     end_msg = {
                         'conductor_id': driver_id,
                         'cp_id': self.cp_id,
@@ -119,7 +114,6 @@ class EVChargingPointEngine:
                     except Exception:
                         print(f"[ERROR] No se pudo enviar fin_suministro tras recuperación")
 
-                # Eliminar el archivo después de procesar
                 os.remove(self.state_file)
         except Exception:
             pass
@@ -132,11 +126,11 @@ class EVChargingPointEngine:
         except Exception:
             pass
 
-    ### MÉTODO DE LOG ÚNICO
+    ### LOG DE MENSAJES 
+
     def _log(self, level, msg, status=False, end="\n"):
         with self.print_lock:
             if status:
-                # Línea dinámica (estado en curso)
                 text = f"\r{msg}"
                 self._status_active = True
                 self._status_text = text
@@ -144,12 +138,10 @@ class EVChargingPointEngine:
                 sys.stdout.write(text)
                 sys.stdout.flush()
             else:
-                # Para mensajes de finalización, hacer salto de línea primero
                 if self._status_active and level in ['EVENTO', 'ERROR', 'INFO'] and any(word in msg for word in ['finalizado', 'interrumpido', 'detenido', 'comunicada']):
-                    sys.stdout.write('\n')  # Salto de línea antes del mensaje
+                    sys.stdout.write('\n')
                     sys.stdout.flush()
-                    self._status_active = False  # Desactivar estado
-                # Para otros mensajes, limpiar la línea
+                    self._status_active = False
                 elif self._status_active:
                     sys.stdout.write('\r' + ' ' * self._status_length + '\r')
                     sys.stdout.flush()
@@ -157,7 +149,6 @@ class EVChargingPointEngine:
 
                 print(f"[{level}] {msg}", end=end, flush=True)
 
-                # NO redibujar línea de estado después de mensajes de finalización
                 if self._status_active and level not in ['EVENTO', 'ERROR', 'INFO']:
                     sys.stdout.write(self._status_text)
                     sys.stdout.flush()
@@ -243,6 +234,7 @@ class EVChargingPointEngine:
                 time.sleep(2)
 
     ### MONITOR
+
     def _init_monitor(self):
         try:
             self.monitor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -302,6 +294,7 @@ class EVChargingPointEngine:
                     time.sleep(1)
 
     ### SUMINISTRO
+
     def _handle_engine_state(self, kmsg):
         if kmsg.get('tipo') == 'SOLICITAR_ESTADO':
             with self.lock:
@@ -374,12 +367,10 @@ class EVChargingPointEngine:
             consumed_kwh += self.kWH
             total_price = consumed_kwh * self.price
 
-            # Actualizar variables de instancia para guardar estado
             with self.lock:
                 self.consumed_kwh = consumed_kwh
                 self.total_price = total_price
 
-            # Guardar estado periódicamente
             self._save_state()
 
             telemetry = {'cp_id': self.cp_id, 'conductor_id': driver_id, 'consumo_actual': round(consumed_kwh, 2), 'importe_actual': round(total_price, 2)}
@@ -390,12 +381,9 @@ class EVChargingPointEngine:
                 pass
             time.sleep(1)
 
-        # Verificar si se está cerrando el Engine
         if not self.running:
             self._log("INFO", "Engine cerrando. Estado guardado para recuperación.")
-            # El estado ya está guardado, se enviará fin_suministro al reiniciar
         elif not self.breakdown_status:
-            # Suministro finalizado normalmente (comando F)
             end_msg = {'conductor_id': driver_id, 'cp_id': self.cp_id, 'suministro_id': supply_id, 'consumo_kwh': round(consumed_kwh, 2), 'importe_total': round(total_price, 2)}
             try:
                 self.producer.send('fin_suministro', end_msg)
@@ -407,10 +395,8 @@ class EVChargingPointEngine:
         with self.lock:
             self.charging = False
             if not self.running:
-                # Mantener datos para recuperación
                 pass
             else:
-                # Limpiar solo si finalizó normalmente
                 self.current_driver = None
                 self.current_supply_id = None
                 self.consumed_kwh = 0.0
@@ -419,6 +405,7 @@ class EVChargingPointEngine:
         self._log("EVENTO", f"Suministro finalizado. Consumo total {consumed_kwh:.2f} kWh | Total {total_price:.2f} EUR")
 
     ### DISPLAY
+
     def _display_stats(self):
         start_time = time.time()
         consumed_kwh = 0
@@ -437,6 +424,7 @@ class EVChargingPointEngine:
             time.sleep(1)
 
     ### ENGINE
+
     def start(self):
         threading.Thread(target=self._listen_kafka, daemon=True).start()
         threading.Thread(target=self._listen_monitor, daemon=True).start()
@@ -520,11 +508,7 @@ class EVChargingPointEngine:
     def end(self):
         self._log("INFO", "Cerrando aplicación...")
 
-        # Primero detener el running para que los hilos sepan que deben parar
         self.running = False
-
-        # Esperar a que el hilo de suministro termine (si hay uno activo)
-        # NO tocar self.charging para que el hilo de _supply lo maneje correctamente
         time.sleep(2)
 
         try:
@@ -542,8 +526,8 @@ class EVChargingPointEngine:
 def main():
     if len(sys.argv) < 4:
         print("Uso: python main.py [ip_broker:port_broker] [ip_monitor:port_monitor] <cp_id> [--gui]")
-        print("Ejemplo CLI: python main.py localhost:9092 localhost:5050 CP001")
-        print("Ejemplo GUI: python main.py localhost:9092 localhost:5050 CP001 --gui")
+        print("Ejemplo CLI: python EV_CP_E.py localhost:9092 localhost:5050 CP001")
+        print("Ejemplo GUI: python EV_CP_E.py localhost:9092 localhost:5050 CP001 --gui")
         sys.exit(1)
     broker = sys.argv[1]
     monitor_ip, monitor_port = sys.argv[2].split(':')

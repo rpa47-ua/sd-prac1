@@ -48,7 +48,7 @@ for /l %%i in (1,1,%CANTIDAD%) do (
     )
 
     echo Lanzando Engine !cp_id! en puerto !puerto!
-    start "!cp_id!" cmd /k "cd /d EV_CP_E && python main.py %IP_CENTRAL%:9092 localhost:!puerto! !cp_id!"
+    start "!cp_id!" cmd /k "cd /d EV_CP_E && python EV_CP_E.py %IP_CENTRAL%:9092 localhost:!puerto! !cp_id!"
     timeout /t 2 /nobreak >nul
 
     set /a puerto=!puerto!+1
@@ -73,7 +73,7 @@ for /l %%i in (1,1,%CANTIDAD%) do (
     )
 
     echo Lanzando Monitor !cp_id! en puerto !puerto!
-    start "!cp_id!_MON" cmd /k "cd /d EV_CP_M && python main.py localhost:!puerto! %IP_CENTRAL%:5000 !cp_id!"
+    start "!cp_id!_MON" cmd /k "cd /d EV_CP_M && python EV_CP_M.py localhost:!puerto! %IP_CENTRAL%:5000 !cp_id!"
     timeout /t 2 /nobreak >nul
 
     set /a puerto=!puerto!+1

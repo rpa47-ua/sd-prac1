@@ -11,7 +11,6 @@ class EVDriver:
         self.gui_mode = gui_mode
         self.gui = None
 
-        self.central_status = False
         self.charging = False
         self.running = True
         self.current_cp = None
@@ -28,7 +27,7 @@ class EVDriver:
         self.lock = threading.Lock()
         self.print_lock = threading.Lock()
 
-        self.display_running = False #Telemetry
+        self.display_running = False # tELEMETRIA
         self._status_active = False
         self._status_text = ""
         self._status_length = 0
@@ -41,11 +40,11 @@ class EVDriver:
         self.thread = threading.Thread(target=self._listen_kafka, daemon=True)
         self.thread.start()
 
-    ### MÉTODO DE LOG ÚNICO (igual que en engine)
+    ### LOG DE MENSAJES 
+
     def _log(self, level, msg, status=False, end="\n"):
         with self.print_lock:
             if status:
-                # Línea dinámica (estado en curso)
                 text = f"\r{msg}"
                 self._status_active = True
                 self._status_text = text
@@ -53,12 +52,10 @@ class EVDriver:
                 sys.stdout.write(text)
                 sys.stdout.flush()
             else:
-                # Para mensajes de finalización, hacer salto de línea primero
                 if self._status_active and level in ['TICKET', 'FIN SUMINISTRO', 'NOTIFICACIÓN']:
-                    sys.stdout.write('\n')  # Salto de línea antes del mensaje
+                    sys.stdout.write('\n')
                     sys.stdout.flush()
-                    self._status_active = False  # Desactivar estado
-                # Para otros mensajes, limpiar la línea
+                    self._status_active = False
                 elif self._status_active:
                     sys.stdout.write('\r' + ' ' * self._status_length + '\r')
                     sys.stdout.flush()
@@ -66,7 +63,6 @@ class EVDriver:
 
                 print(f"[{level}] {msg}", end=end, flush=True)
 
-                # NO redibujar línea de estado después de mensajes de finalización
                 if self._status_active and level not in ['TICKET', 'FIN SUMINISTRO', 'NOTIFICACIÓN']:
                     sys.stdout.write(self._status_text)
                     sys.stdout.flush()
@@ -85,7 +81,6 @@ class EVDriver:
                 time.sleep(3)
                 self._log("REGISTRO", f"Conductor {self.driver_id} registrado en el sistema")
 
-                # Solicitar recuperación de suministro activo
                 recuperacion = {
                     'tipo': 'RECUPERAR_SUMINISTRO',
                     'conductor_id': self.driver_id
@@ -211,7 +206,6 @@ class EVDriver:
                 self.waiting_authorization = False
 
     def _file_process(self, original_file):
-        # Esperar a que el registro esté completo
         self._log("INFO", "Verificando registro del conductor...")
         time.sleep(3)
 
@@ -246,7 +240,6 @@ class EVDriver:
 
         self._log("INFO", f"--- Procesando solicitud {request_num}/{total} ---")
 
-        # Esperar hasta que no haya suministro activo ni esperando autorización
         while True:
             with self.lock:
                 if not self.charging and not self.waiting_authorization:
@@ -376,10 +369,8 @@ class EVDriver:
                 self.current_consumption = 0
                 self.current_price = 0
 
-                # Si estamos procesando archivo, continuar con siguiente
                 if self.file_processing:
                     self.file_index += 1
-                    # Esperar 4 segundos para que el CP se libere en la Central
                     time.sleep(4)
                     threading.Thread(target=self._process_next_file_request, daemon=True).start()
 
@@ -397,7 +388,6 @@ class EVDriver:
                     self.current_consumption = 0
                     self.current_price = 0
                     
-                    # Si estamos procesando archivo, continuar con siguiente
                     if self.file_processing:
                         self.file_index += 1
                         threading.Thread(target=self._process_next_file_request, daemon=True).start()
@@ -504,7 +494,6 @@ class EVDriver:
     def end(self):
         self._log("INFO", "Cerrando aplicación...")
 
-        # Desregistrar conductor ANTES de cambiar running a False
         if self.producer:
             try:
                 desregistro = {
@@ -540,8 +529,8 @@ class EVDriver:
 def main():
     if len(sys.argv) < 3:
         print("\nUso: python main.py [ip_broker:port_broker] <driver_id> [--gui]")
-        print("Ejemplo CLI: python main.py localhost:9092 DRV001")
-        print("Ejemplo GUI: python main.py localhost:9092 DRV001 --gui")
+        print("Ejemplo CLI: python EV_Driver.py localhost:9092 DRV001")
+        print("Ejemplo GUI: python EV_Driver.py localhost:9092 DRV001 --gui")
         sys.exit(1)
 
     broker = sys.argv[1]

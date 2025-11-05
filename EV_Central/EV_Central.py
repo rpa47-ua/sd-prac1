@@ -154,8 +154,8 @@ class EVCentral:
 
 def main():
     if len(sys.argv) < 3:
-        print("Uso: python main.py <puerto_socket> <kafka_broker> [db_host:db_port]")
-        print("Ejemplo: python main.py 5000 localhost:9092 localhost:3306")
+        print("Uso: python EV_Central.py <puerto_socket> <kafka_broker> [db_host:db_port]")
+        print("Ejemplo: python EV_Central.py 5000 localhost:9092 localhost:3306")
         sys.exit(1)
 
     puerto_socket = int(sys.argv[1])

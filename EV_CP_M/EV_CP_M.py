@@ -181,7 +181,6 @@ class EVChargingPointMonitor:
 
                 with self.lock:
                     if not current_state:
-                        # Engine desconectado
                         if self.last_status == "SUMINISTRANDO":
                             self.supply_active_before_disconnect = True
                             self._log("[MONITOR] Suministro activo detectado antes de desconexión")
@@ -192,9 +191,7 @@ class EVChargingPointMonitor:
                             except: pass
                             self.engine_client = None
                     else:
-                        # Engine conectado
                         if self.supply_active_before_disconnect and current_state != "SUMINISTRANDO":
-                            # El suministro finalizó durante la desconexión
                             self._log("[MONITOR] Suministro finalizado durante desconexión del monitor")
                             self.supply_active_before_disconnect = False
                         
@@ -237,11 +234,9 @@ class EVChargingPointMonitor:
     def _cleanup(self):
         self._log("\n[MONITOR] Cerrando conexiones...")
 
-        # Si hay suministro activo, detener el Engine y notificar a Central
         with self.lock:
             if self.last_status == "SUMINISTRANDO":
                 self._log("[MONITOR] Suministro activo detectado al cerrar. Deteniendo Engine...")
-                # Enviar comando STOP al Engine para detener el suministro
                 if self.engine_client:
                     try:
                         send("STOP", self.engine_client)
@@ -250,7 +245,6 @@ class EVChargingPointMonitor:
                     except:
                         self._log("[ERROR] No se pudo enviar comando STOP al Engine")
 
-                # Notificar avería para que Central finalice el suministro
                 self._notify_central("AVERIA")
                 time.sleep(1)
 
@@ -329,8 +323,8 @@ class EVChargingPointMonitor:
 def main():
     if len(sys.argv) < 4:
         print("Uso: python main.py [ip_engine:port_engine] [ip_central:port_central] <cp_id> [--gui]")
-        print("Ejemplo CLI: python main.py localhost:5050 localhost:5000 CP001")
-        print("Ejemplo GUI: python main.py localhost:5050 localhost:5000 CP001 --gui")
+        print("Ejemplo CLI: python EV_CP_M.py localhost:5050 localhost:5000 CP001")
+        print("Ejemplo GUI: python EV_CP_M.py localhost:5050 localhost:5000 CP001 --gui")
         sys.exit(1)
 
     engine_ip, engine_port = sys.argv[1].split(':')

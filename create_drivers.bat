@@ -47,7 +47,7 @@ for /l %%i in (1,1,%CANTIDAD%) do (
     )
 
     echo Lanzando Driver !drv_id!
-    start "!drv_id!" cmd /k "cd /d EV_DRIVER && python main.py %IP_CENTRAL%:9092 !drv_id!"
+    start "!drv_id!" cmd /k "cd /d EV_DRIVER && python EV_Driver.py %IP_CENTRAL%:9092 !drv_id!"
     timeout /t 2 /nobreak >nul
 
     set /a num=!num!+1
