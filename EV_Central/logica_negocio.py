@@ -19,14 +19,12 @@ class LogicaNegocio:
     def recuperar_suministros_al_inicio(self):
         print("\n[RECUPERACIÓN] Solicitando estado de suministros a todos los Engines...")
 
-        # 1. Solicitar a todos los Engines que reporten su estado actual
         self.kafka.enviar_mensaje('solicitud_estado_engine', {
             'tipo': 'SOLICITAR_ESTADO',
             'timestamp': time.time()
         })
         time.sleep(2)
 
-        # 2. Enviar tickets pendientes (suministros finalizados sin ticket)
         print("\n[RECUPERACIÓN] Buscando tickets pendientes en la BD...")
         tickets_pendientes = self.db.obtener_suministros_pendientes_ticket()
         for suministro in tickets_pendientes:
@@ -122,7 +120,6 @@ class LogicaNegocio:
         if time_to_end:
             print(f"  Tiempo límite solicitado: {time_to_end}s")
 
-        # 1. Verificar que el conductor existe y está conectado
         conductor = self.db.obtener_conductor(conductor_id)
         if not conductor:
             print(f"[ERROR] Conductor {conductor_id} no registrado en el sistema")
@@ -134,14 +131,12 @@ class LogicaNegocio:
             self._enviar_respuesta_solicitud(conductor_id, cp_id, False, "Conductor no conectado", origen, None, time_to_end)
             return
 
-        # 2. Verificar que el CP existe
         cp = self.db.obtener_cp(cp_id)
         if not cp:
             print(f"[ERROR] CP {cp_id} no existe")
             self._enviar_respuesta_solicitud(conductor_id, cp_id, False, "CP no encontrado", origen, None, time_to_end)
             return
 
-        # 3. Verificar que el CP esta disponible
         if cp['estado'] != 'activado':
             print(f"[INFO] CP {cp_id} no esta disponible (estado: {cp['estado']})")
 
@@ -164,7 +159,6 @@ class LogicaNegocio:
                 self._enviar_respuesta_solicitud(conductor_id, cp_id, False, f"CP no disponible: {cp['estado']}", origen, None, time_to_end)
             return
 
-        # 4. Todo OK - Crear suministro y autorizar
         suministro_id = self.db.crear_suministro(conductor_id, cp_id)
         self.db.actualizar_estado_cp(cp_id, 'suministrando')
 
@@ -178,10 +172,8 @@ class LogicaNegocio:
 
         print(f"[OK] Suministro autorizado (ID: {suministro_id})")
 
-        # 5. Notificar según el origen
         self._enviar_respuesta_solicitud(conductor_id, cp_id, True, "Suministro autorizado", origen, suministro_id, time_to_end)
 
-        # 6. Notificar al CP para que inicie el suministro
         comando = {
             'tipo': 'INICIAR_SUMINISTRO',
             'cp_id': cp_id,
