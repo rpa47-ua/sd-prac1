@@ -8,7 +8,7 @@ class EVDriverGUI:
         self.root = tk.Tk()
         self.root.title(f"Sistema de Conductor - {driver.driver_id}")
         self.root.geometry("1400x800")
-        self.root.minsize(1000, 600)  # Tamaño mínimo más razonable
+        self.root.minsize(1000, 600)
         self.root.resizable(True, True)
         
         self.bg_dark = "#1a1d2e"
@@ -29,7 +29,6 @@ class EVDriverGUI:
         
         self.root.configure(bg=self.bg_dark)
         
-        # Grid weights para resize
         self.root.grid_rowconfigure(0, weight=1)
         self.root.grid_columnconfigure(0, weight=1)
         

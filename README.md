@@ -19,21 +19,21 @@ Sistema de gestión centralizado para una red de puntos de recarga de vehículos
 ```
 sd-prac1/
 ├── EV_Central/
-│   ├── main.py
+│   ├── EV_Central.py
 │   ├── panel_gui.py
 │   ├── database.py
 │   ├── kafka_handler.py
 │   ├── servidor_socket.py
 │   └── logica_negocio.py
 ├── EV_CP_E/
-│   ├── main.py
+│   ├── EV_CP_E.py
 │   ├── gui.py
 │   └── engine_state_*.json
 ├── EV_CP_M/
-│   ├── main.py
+│   ├── EV_CP_M.py
 │   ├── gui.py
 ├── EV_DRIVER/
-│   ├── main.py
+│   ├── EV_Driver.py
 │   ├── gui.py
 │   └── drv*.txt
 ├── init-db/

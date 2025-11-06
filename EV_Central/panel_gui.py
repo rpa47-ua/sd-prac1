@@ -16,17 +16,16 @@ class PanelGUI:
         self.tree = None
         self.stats_labels = {}
 
-        # Colores del tema
         self.COLORS = {
-            'activado': '#4CAF50',      # Verde
-            'parado': '#FF9800',         # Naranja
-            'suministrando': '#2196F3',  # Azul
-            'averiado': '#F44336',       # Rojo
-            'desconectado': '#9E9E9E',   # Gris
-            'bg_main': '#1E1E1E',        # Fondo oscuro
-            'bg_panel': '#2D2D2D',       # Fondo panel
-            'text': '#FFFFFF',           # Texto blanco
-            'accent': '#00BCD4'          # Acento cyan
+            'activado': '#4CAF50',      
+            'parado': '#FF9800',        
+            'suministrando': '#2196F3', 
+            'averiado': '#F44336',      
+            'desconectado': '#9E9E9E',   
+            'bg_main': '#1E1E1E',       
+            'bg_panel': '#2D2D2D',       
+            'text': '#FFFFFF',          
+            'accent': '#00BCD4'        
         }
 
     def iniciar(self):
