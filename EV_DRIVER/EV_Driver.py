@@ -444,7 +444,7 @@ class EVDriver:
             
         self._log("OK", f"Conductor {self.driver_id} operativo.")
         self._log("INFO", "=== MENÚ DE COMANDOS ===")
-        self._log("INFO", "<CP_ID>       - Solicitar suministro en punto de carga")
+        self._log("INFO", "S <CP_ID>     - Solicitar suministro en punto de carga")
         self._log("INFO", "lista         - Ver puntos de carga disponibles")
         self._log("INFO", "file          - Procesar solicitudes desde suministros.txt")
         self._log("INFO", "file <nombre> - Procesar solicitudes desde archivo específico")
@@ -475,8 +475,15 @@ class EVDriver:
                         self._file_process(filename)
                     else:
                         self._log("ERROR", "Formato incorrecto. Use: file <nombre_archivo>")
+                elif cmd.upper().startswith('S '):
+                    parts = cmd.split(maxsplit=1)
+                    if len(parts) > 1:
+                        driver_id = parts[1].strip()
+                        self._send_charging_request(driver_id)
+                    else:
+                        self._log("ERROR", "Formato incorrecto. Use: S <CP_ID>")
                 else:
-                    self._send_charging_request(cmd.upper())
+                    self._log("INFO", "Comando no reconocido.")
                     
             except (EOFError, KeyboardInterrupt):
                 if self.gui_mode and self.gui:

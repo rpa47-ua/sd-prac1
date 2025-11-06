@@ -8,7 +8,7 @@ class EVChargingGUI:
         self.root = tk.Tk()
         self.root.title(f"Sistema de Gestión - Punto de Carga {engine.cp_id}")
         self.root.geometry("1400x800")
-        self.root.minsize(1000, 600)  # Tamaño mínimo más razonable
+        self.root.minsize(1000, 600)
         self.root.resizable(True, True)
 
         self.bg_dark = "#1a1d2e"
@@ -29,7 +29,6 @@ class EVChargingGUI:
         
         self.root.configure(bg=self.bg_dark)
         
-        # Grid weights para resize
         self.root.grid_rowconfigure(0, weight=1)
         self.root.grid_columnconfigure(0, weight=1)
         
@@ -471,18 +470,10 @@ class EVChargingGUI:
     def _on_breakdown(self):
         with self.engine.lock:
             self.engine.breakdown_status = True
-            
-        self.breakdown_btn.config(state=tk.DISABLED, bg=self.border)
-        self.repair_btn.config(state=tk.NORMAL, bg=self.success)
-        self.maintenance_status.config(text="Avería detectada", fg=self.error)
         
     def _on_repair(self):
         with self.engine.lock:
             self.engine.breakdown_status = False
-            
-        self.breakdown_btn.config(state=tk.NORMAL, bg=self.warning)
-        self.repair_btn.config(state=tk.DISABLED, bg=self.border)
-        self.maintenance_status.config(text="Sistema operativo", fg=self.success)
         
     def _start_update_loop(self):
         self._update_status()
@@ -519,11 +510,7 @@ class EVChargingGUI:
             
             self.driver_entry.config(state=tk.DISABLED, disabledbackground=self.bg_light, disabledforeground=self.text_dim)
             self.start_btn.config(state=tk.DISABLED, bg=self.border)
-            
             self.stop_btn.config(state=tk.NORMAL, bg=self.error)
-            
-            if breakdown:
-                self.breakdown_btn.config(state=tk.DISABLED, bg=self.border)
         else:
             self.current_supply_label.config(text="Sin suministro activo", fg=self.text_dim)
             self.driver_value.config(text="---")
@@ -543,6 +530,15 @@ class EVChargingGUI:
             self.consumption_value.config(text="0.00")
             self.price_value.config(text="0.00")
             self.time_value.config(text="0")
+        
+        if breakdown:
+            self.breakdown_btn.config(state=tk.DISABLED, bg=self.border)
+            self.repair_btn.config(state=tk.NORMAL, bg=self.success)
+            self.maintenance_status.config(text="Avería detectada", fg=self.error)
+        else:
+            self.breakdown_btn.config(state=tk.NORMAL, bg=self.warning)
+            self.repair_btn.config(state=tk.DISABLED, bg=self.border)
+            self.maintenance_status.config(text="Sistema operativo", fg=self.success)
         
         try:
             self.root.after(500, self._update_status)

@@ -49,6 +49,7 @@ class EVChargingPointEngine:
         self.current_supply_id = None
         self.consumed_kwh = 0.0
         self.total_price = 0.0
+        self.supply_start_time = None
 
         self.kWH = abs(1 - random.random())
         self.price = abs(1 - random.random())
@@ -328,6 +329,7 @@ class EVChargingPointEngine:
                 self.charging = True
                 self.current_driver = kmsg.get('conductor_id')
                 self.current_supply_id = kmsg.get('suministro_id')
+                self.supply_start_time = time.time()
                 threading.Thread(target=self._supply, daemon=True).start()
                 threading.Thread(target=self._display_stats, daemon=True).start()
         else:
@@ -401,6 +403,7 @@ class EVChargingPointEngine:
                 self.current_supply_id = None
                 self.consumed_kwh = 0.0
                 self.total_price = 0.0
+                self.supply_start_time = None
 
         self._log("EVENTO", f"Suministro finalizado. Consumo total {consumed_kwh:.2f} kWh | Total {total_price:.2f} EUR")
 
@@ -414,13 +417,24 @@ class EVChargingPointEngine:
             with self.lock:
                 if not self.charging:
                     break
-                consumed_kwh += self.kWH
-                total_price = consumed_kwh * self.price
+                consumed_kwh = self.consumed_kwh
+                total_price = self.total_price
                 driver = self.current_driver
                 cp = self.cp_id
             duration = int(time.time() - start_time)
-            status_text = f"CP {cp} | Conductor {driver} | Tiempo {duration}s | Consumo {consumed_kwh:.2f} kWh | Total {total_price:.2f} EUR"
-            self._log("", status_text, status=True)
+            
+            # Actualizar GUI si está activa
+            if self.gui_mode and self.gui:
+                try:
+                    self.gui._update_metrics(consumed_kwh, total_price, duration)
+                except Exception:
+                    pass
+            
+            # Mostrar en consola solo si no hay GUI
+            if not self.gui_mode:
+                status_text = f"CP {cp} | Conductor {driver} | Tiempo {duration}s | Consumo {consumed_kwh:.2f} kWh | Total {total_price:.2f} EUR"
+                self._log("", status_text, status=True)
+            
             time.sleep(1)
 
     ### ENGINE
@@ -450,11 +464,11 @@ class EVChargingPointEngine:
             time.sleep(0.5)
         self._log("OK", f"Punto de carga {self.cp_id} operativo.")
         self._log("INFO", "=== MENÚ DE COMANDOS ===")
-        self._log("INFO", "S <ID_CONDUCTOR>  → Solicitar suministro")
-        self._log("INFO", "F                 → Finalizar suministro actual")
-        self._log("INFO", "A                 → Simular avería")
-        self._log("INFO", "R                 → Reparar avería")
-        self._log("INFO", "SALIR             → Cerrar la aplicación")
+        self._log("INFO", "S <ID_CONDUCTOR>  - Solicitar suministro")
+        self._log("INFO", "F                 - Finalizar suministro actual")
+        self._log("INFO", "A                 - Simular avería")
+        self._log("INFO", "R                 - Reparar avería")
+        self._log("INFO", "SALIR             - Cerrar la aplicación")
         self._log("INFO", "=========================")
         while self.running:
             try:
