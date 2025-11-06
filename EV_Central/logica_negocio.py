@@ -116,26 +116,29 @@ class LogicaNegocio:
         conductor_id = mensaje.get('conductor_id')
         cp_id = mensaje.get('cp_id')
         origen = mensaje.get('origen', 'CONDUCTOR')
+        time_to_end = mensaje.get('time_to_end')
 
         print(f"\nProcesando solicitud [{origen}]: Conductor {conductor_id} -> CP {cp_id}")
+        if time_to_end:
+            print(f"  Tiempo límite solicitado: {time_to_end}s")
 
         # 1. Verificar que el conductor existe y está conectado
         conductor = self.db.obtener_conductor(conductor_id)
         if not conductor:
             print(f"[ERROR] Conductor {conductor_id} no registrado en el sistema")
-            self._enviar_respuesta_solicitud(conductor_id, cp_id, False, "Conductor no registrado", origen, None)
+            self._enviar_respuesta_solicitud(conductor_id, cp_id, False, "Conductor no registrado", origen, None, time_to_end)
             return
 
         if not conductor.get('conectado', False):
             print(f"[ERROR] Conductor {conductor_id} no está conectado")
-            self._enviar_respuesta_solicitud(conductor_id, cp_id, False, "Conductor no conectado", origen, None)
+            self._enviar_respuesta_solicitud(conductor_id, cp_id, False, "Conductor no conectado", origen, None, time_to_end)
             return
 
         # 2. Verificar que el CP existe
         cp = self.db.obtener_cp(cp_id)
         if not cp:
             print(f"[ERROR] CP {cp_id} no existe")
-            self._enviar_respuesta_solicitud(conductor_id, cp_id, False, "CP no encontrado", origen, None)
+            self._enviar_respuesta_solicitud(conductor_id, cp_id, False, "CP no encontrado", origen, None, time_to_end)
             return
 
         # 3. Verificar que el CP esta disponible
@@ -149,15 +152,16 @@ class LogicaNegocio:
 
                     self.colas_espera[cp_id].append({
                         'conductor_id': conductor_id,
-                        'origen': origen
+                        'origen': origen,
+                        'time_to_end': time_to_end
                     })
 
                     posicion = len(self.colas_espera[cp_id])
                 print(f"[COLA] Conductor {conductor_id} añadido a la cola de {cp_id} (posición {posicion})")
-                self._enviar_respuesta_solicitud(conductor_id, cp_id, False, f"CP ocupado. En cola, posición {posicion}", origen, None)
+                self._enviar_respuesta_solicitud(conductor_id, cp_id, False, f"CP ocupado. En cola, posición {posicion}", origen, None, time_to_end)
             else:
                 print(f"[RECHAZO] Solicitud rechazada para {cp_id} (estado: {cp['estado']})")
-                self._enviar_respuesta_solicitud(conductor_id, cp_id, False, f"CP no disponible: {cp['estado']}", origen, None)
+                self._enviar_respuesta_solicitud(conductor_id, cp_id, False, f"CP no disponible: {cp['estado']}", origen, None, time_to_end)
             return
 
         # 4. Todo OK - Crear suministro y autorizar
@@ -175,35 +179,49 @@ class LogicaNegocio:
         print(f"[OK] Suministro autorizado (ID: {suministro_id})")
 
         # 5. Notificar según el origen
-        self._enviar_respuesta_solicitud(conductor_id, cp_id, True, "Suministro autorizado", origen, suministro_id)
+        self._enviar_respuesta_solicitud(conductor_id, cp_id, True, "Suministro autorizado", origen, suministro_id, time_to_end)
 
         # 6. Notificar al CP para que inicie el suministro
-        self.kafka.enviar_mensaje('comandos_cp', {
+        comando = {
             'tipo': 'INICIAR_SUMINISTRO',
             'cp_id': cp_id,
             'conductor_id': conductor_id,
             'suministro_id': suministro_id
-        })
+        }
+
+        if time_to_end is not None:
+            comando['time_to_end'] = time_to_end
+
+        self.kafka.enviar_mensaje('comandos_cp', comando)
+        
         time.sleep(2)
 
-    def _enviar_respuesta_solicitud(self, conductor_id: str, cp_id: str, autorizado: bool, mensaje: str, origen: str, suministro_id: int):
+    def _enviar_respuesta_solicitud(self, conductor_id: str, cp_id: str, autorizado: bool, mensaje: str, origen: str, suministro_id: int, time_to_end=None):
         if origen == 'CP':
-            self.kafka.enviar_mensaje('respuestas_cp', {
+            respuesta = {
                 'cp_id': cp_id,
                 'conductor_id': conductor_id,
                 'autorizado': autorizado,
                 'mensaje': mensaje,
                 'suministro_id': suministro_id
-            })
+            }
+            if time_to_end is not None:
+                respuesta['time_to_end'] = time_to_end
+                
+            self.kafka.enviar_mensaje('respuestas_cp', respuesta)
             time.sleep(2)
         else:
-            self.kafka.enviar_mensaje('respuestas_conductor', {
+            respuesta = {
                 'conductor_id': conductor_id,
                 'cp_id': cp_id,
                 'autorizado': autorizado,
                 'mensaje': mensaje,
                 'suministro_id': suministro_id
-            })
+            }
+            if time_to_end is not None:
+                respuesta['time_to_end'] = time_to_end
+                
+            self.kafka.enviar_mensaje('respuestas_conductor', respuesta)
             time.sleep(2)
 
     def _procesar_siguiente_en_cola(self, cp_id: str):
@@ -215,6 +233,7 @@ class LogicaNegocio:
             siguiente = self.colas_espera[cp_id].pop(0)
             conductor_id = siguiente['conductor_id']
             origen = siguiente['origen']
+            time_to_end = siguiente.get('time_to_end')
 
         print(f"[COLA] Procesando siguiente en cola: Conductor {conductor_id} -> CP {cp_id}")
 
@@ -244,14 +263,20 @@ class LogicaNegocio:
 
         print(f"[OK] Suministro autorizado desde cola (ID: {suministro_id})")
 
-        self._enviar_respuesta_solicitud(conductor_id, cp_id, True, "Suministro autorizado (desde cola)", origen, suministro_id)
+        self._enviar_respuesta_solicitud(conductor_id, cp_id, True, "Suministro autorizado (desde cola)", origen, suministro_id, time_to_end)
 
-        self.kafka.enviar_mensaje('comandos_cp', {
+        comando = {
             'tipo': 'INICIAR_SUMINISTRO',
             'cp_id': cp_id,
             'conductor_id': conductor_id,
             'suministro_id': suministro_id
-        })
+        }
+
+        if time_to_end is not None:
+            comando['time_to_end'] = time_to_end
+
+        self.kafka.enviar_mensaje('comandos_cp', comando)
+
         time.sleep(2)
 
     def procesar_telemetria_cp(self, mensaje: dict):

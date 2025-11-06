@@ -172,7 +172,7 @@ class EVDriver:
         
     ### SUMINISTRO Y FUNCIONALIDADES
 
-    def _send_charging_request(self, cp_id):
+    def _send_charging_request(self, cp_id, time_to_end=None):
         with self.lock:
             if not self.central_status:
                 self._log("ERROR", "Imposible conectar con la Central")
@@ -182,11 +182,16 @@ class EVDriver:
                 return
             
         self._log("SOLICITUD", f"Enviando solicitud de carga al punto de carga: {cp_id}")
+        if time_to_end:
+            self._log("INFO", f"  Tiempo límite solicitado: {time_to_end}s")
         
         request = {
             'conductor_id': self.driver_id, 
             'cp_id': cp_id
         }
+
+        if time_to_end is not None:
+            request['time_to_end'] = time_to_end   
 
         try:
             if not self.producer:
@@ -211,7 +216,14 @@ class EVDriver:
 
         try:
             with open(original_file, 'r') as file:
-                requests = [line.strip() for line in file if line.strip()]
+                requests = []
+                for line in file:
+                    parts = line.strip().split()
+                    if not parts:
+                        continue
+                    cp_id = parts[0]
+                    time_to_end = float(parts[1]) if len(parts) > 1 and parts[1].replace('.', '', 1).isdigit() else None
+                    requests.append((cp_id, time_to_end))
         except FileNotFoundError:
             self._log("ERROR", f"No se encontró el archivo {original_file}. Verifique el nombre o la ruta.")
             return
@@ -234,7 +246,7 @@ class EVDriver:
                 self.file_processing = False
                 return
 
-            cp_id = self.file_requests[self.file_index]
+            cp_id, time_to_end  = self.file_requests[self.file_index]
             request_num = self.file_index + 1
             total = len(self.file_requests)
 
@@ -247,7 +259,7 @@ class EVDriver:
             self._log("INFO", f"Esperando a que termine el suministro actual antes de procesar solicitud {request_num}/{total}...")
             time.sleep(2)
 
-        self._send_charging_request(cp_id)
+        self._send_charging_request(cp_id, time_to_end)
 
     def _display_stats(self):
         if self.gui_mode:
@@ -302,6 +314,8 @@ class EVDriver:
             self._log("INFO", "========================")
 
     def _request_cp_list(self):
+        with self.lock:
+            self.cp_list.clear()
         request = {'tipo': 'SOLICITUD'}
         try:
             if not self.producer:
@@ -315,7 +329,7 @@ class EVDriver:
 
             wait_time = 0
             while not self.cp_list and wait_time < 3:
-                time.sleep(0.2)
+                time.sleep(1)
                 wait_time += 0.2
 
         except Exception:
@@ -492,7 +506,7 @@ class EVDriver:
                     except:
                         pass
                 break
-            except Exception:
+            except Exception: 
                 self._log("ERROR", "Se produjo un error inesperado al procesar el comando.")
         
         if not self.gui_mode:

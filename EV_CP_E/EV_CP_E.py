@@ -51,8 +51,8 @@ class EVChargingPointEngine:
         self.total_price = 0.0
         self.supply_start_time = None
 
-        self.kWH = abs(1 - random.random())
-        self.price = abs(1 - random.random())
+        self.kWH = 0.666
+        self.price = 1.88
 
         self.lock = threading.Lock()
         self.print_lock = threading.Lock()
@@ -330,7 +330,10 @@ class EVChargingPointEngine:
                 self.current_driver = kmsg.get('conductor_id')
                 self.current_supply_id = kmsg.get('suministro_id')
                 self.supply_start_time = time.time()
-                threading.Thread(target=self._supply, daemon=True).start()
+                time_limit = float(kmsg.get('time_to_end') or kmsg.get('time') or 0)
+                if time_limit == 0:
+                        time_limit = None
+                threading.Thread(target=self._supply, args=(time_limit,), daemon=True).start()
                 threading.Thread(target=self._display_stats, daemon=True).start()
         else:
             self._log("ERROR", f"Suministro denegado: {kmsg.get('mensaje', 'Autorización rechazada.')}")
@@ -350,13 +353,20 @@ class EVChargingPointEngine:
             self._log("ERROR", "No se pudo notificar la avería. Intentando reconexión Kafka.")
             self._reconnect_kafka()
 
-    def _supply(self):
+    def _supply(self, time_limit=None):
         with self.lock:
             driver_id = self.current_driver
             supply_id = self.current_supply_id
-        self._log("EVENTO", f"Suministro iniciado | Conductor {driver_id} | ID {supply_id} | Precio {self.price:.2f} €/kWh")
+            
+        if time_limit:
+            self._log("EVENTO", f"Suministro iniciado | Conductor {driver_id} | ID {supply_id} | Precio {self.price:.2f} €/kWh | Tiempo límite: {time_limit}s")
+        else:
+            self._log("EVENTO", f"Suministro iniciado | Conductor {driver_id} | ID {supply_id} | Precio {self.price:.2f} €/kWh")
+            
         consumed_kwh = 0
         total_price = 0
+        finalizacion_por_averia = False
+        
         while True:
             with self.lock:
                 if not self.charging or not self.running:
@@ -364,8 +374,17 @@ class EVChargingPointEngine:
                 if self.breakdown_status:
                     self._log("EVENTO", "Avería detectada. Suministro interrumpido.")
                     self._notify_breakdown(driver_id)
+                    finalizacion_por_averia = True
                     self.charging = False
                     break
+                    
+            # Verificar tiempo límite
+            if time_limit is not None:
+                elapsed_time = time.time() - self.supply_start_time
+                if elapsed_time >= time_limit:
+                    self._log("EVENTO", f"Tiempo límite ({time_limit}s) alcanzado. Finalizando automáticamente.")
+                    break
+
             consumed_kwh += self.kWH
             total_price = consumed_kwh * self.price
 
@@ -383,29 +402,36 @@ class EVChargingPointEngine:
                 pass
             time.sleep(1)
 
+        # Finalización limpia del suministro
+        with self.lock:
+            self.charging = False
+            self.current_driver = None
+            self.current_supply_id = None
+            self.consumed_kwh = 0.0
+            self.total_price = 0.0
+            self.supply_start_time = None
+
         if not self.running:
             self._log("INFO", "Engine cerrando. Estado guardado para recuperación.")
-        elif not self.breakdown_status:
-            end_msg = {'conductor_id': driver_id, 'cp_id': self.cp_id, 'suministro_id': supply_id, 'consumo_kwh': round(consumed_kwh, 2), 'importe_total': round(total_price, 2)}
+        elif not finalizacion_por_averia:
+            # Solo enviar fin_suministro si NO fue por avería
+            end_msg = {
+                'conductor_id': driver_id, 
+                'cp_id': self.cp_id, 
+                'suministro_id': supply_id, 
+                'consumo_kwh': round(consumed_kwh, 2), 
+                'importe_total': round(total_price, 2)
+            }
             try:
                 self.producer.send('fin_suministro', end_msg)
                 self.producer.flush()
+                self._log("EVENTO", f"Suministro finalizado. Consumo total {consumed_kwh:.2f} kWh | Total {total_price:.2f} EUR")
             except Exception:
                 self._log("ERROR", "No se pudo comunicar el fin de suministro.")
+            
             self._clear_state()
-
-        with self.lock:
-            self.charging = False
-            if not self.running:
-                pass
-            else:
-                self.current_driver = None
-                self.current_supply_id = None
-                self.consumed_kwh = 0.0
-                self.total_price = 0.0
-                self.supply_start_time = None
-
-        self._log("EVENTO", f"Suministro finalizado. Consumo total {consumed_kwh:.2f} kWh | Total {total_price:.2f} EUR")
+        else:
+            self._log("EVENTO", f"Suministro interrumpido por avería. Consumo parcial {consumed_kwh:.2f} kWh | Total {total_price:.2f} EUR")
 
     ### DISPLAY
 
