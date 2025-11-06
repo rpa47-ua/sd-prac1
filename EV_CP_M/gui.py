@@ -8,7 +8,7 @@ class EVMonitorGUI:
         self.root = tk.Tk()
         self.root.title(f"Monitor - Punto de Carga {monitor.cp_id}")
         self.root.geometry("1200x700")
-        self.root.minsize(900, 550)  # Tamaño mínimo más razonable
+        self.root.minsize(900, 550)
         self.root.resizable(True, True)
 
         self.bg_dark = "#1a1d2e"
@@ -30,7 +30,6 @@ class EVMonitorGUI:
         self.root.configure(bg=self.bg_dark)
         self.log_messages = []
         
-        # Grid weights para resize
         self.root.grid_rowconfigure(0, weight=1)
         self.root.grid_columnconfigure(0, weight=1)
         
