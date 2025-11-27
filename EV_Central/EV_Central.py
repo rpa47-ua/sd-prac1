@@ -134,20 +134,42 @@ class EVCentral:
 
     def detener(self):
         self.running = False
-        self.kafka.producer.send('estado_central', key=b'central', value={'estado': False})
-        self.kafka.producer.flush
 
+        # Enviar estado de cierre a Kafka (sin esperar respuesta si falla)
+        try:
+            if self.kafka and self.kafka.producer:
+                self.kafka.producer.send('estado_central', key=b'central', value={'estado': False})
+                self.kafka.producer.flush()
+        except:
+            pass  # Ignorar errores al cerrar
+
+        # Detener panel GUI
         if self.panel:
-            self.panel.detener()
+            try:
+                self.panel.detener()
+            except:
+                pass
 
+        # Detener servidor socket
         if self.servidor:
-            self.servidor.detener()
+            try:
+                self.servidor.detener()
+            except:
+                pass
 
+        # Detener Kafka
         if self.kafka:
-            self.kafka.detener()
+            try:
+                self.kafka.detener()
+            except:
+                pass
 
+        # Desconectar BD
         if self.db:
-            self.db.desconectar()
+            try:
+                self.db.desconectar()
+            except:
+                pass
 
         print("\nSistema detenido correctamente\n")
 

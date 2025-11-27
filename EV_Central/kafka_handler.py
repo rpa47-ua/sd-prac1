@@ -168,8 +168,15 @@ class KafkaHandler:
 
     def detener(self):
         self.running = False
-        if self.producer:
-            self.producer.flush()
-        if self.consumer:
-            self.consumer.close()
+        try:
+            if self.producer:
+                self.producer.flush()
+                self.producer.close()
+        except:
+            pass
+        try:
+            if self.consumer:
+                self.consumer.close()
+        except:
+            pass
         print("[OK] Kafka handler detenido")

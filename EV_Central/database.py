@@ -280,3 +280,127 @@ class Database:
         except Exception as e:
             print(f"Error marcando ticket como enviado: {e}")
             return False
+
+    # === MÉTODOS PARA CIFRADO Y SEGURIDAD (Release 2) ===
+
+    def actualizar_clave_cifrado_cp(self, cp_id: str, clave_cifrado: str):
+        """Actualiza la clave de cifrado de un CP"""
+        try:
+            conn = self._get_connection()
+            try:
+                with conn.cursor() as cursor:
+                    cursor.execute("""UPDATE charging_points
+                                     SET clave_cifrado = %s, fecha_generacion_clave = CURRENT_TIMESTAMP
+                                     WHERE id = %s""",
+                                 (clave_cifrado, cp_id))
+                    return True
+            finally:
+                conn.close()
+        except Exception as e:
+            print(f"Error actualizando clave de cifrado: {e}")
+            return False
+
+    def obtener_clave_cifrado_cp(self, cp_id: str) -> Optional[str]:
+        """Obtiene la clave de cifrado de un CP"""
+        try:
+            conn = self._get_connection()
+            try:
+                with conn.cursor() as cursor:
+                    cursor.execute("SELECT clave_cifrado FROM charging_points WHERE id = %s", (cp_id,))
+                    result = cursor.fetchone()
+                    return result['clave_cifrado'] if result else None
+            finally:
+                conn.close()
+        except Exception as e:
+            print(f"Error obteniendo clave de cifrado: {e}")
+            return None
+
+    # === MÉTODOS PARA DATOS METEOROLÓGICOS (Release 2) ===
+
+    def actualizar_ubicacion_cp(self, cp_id: str, latitud: float, longitud: float):
+        """Actualiza las coordenadas GPS de un CP"""
+        try:
+            conn = self._get_connection()
+            try:
+                with conn.cursor() as cursor:
+                    cursor.execute("""UPDATE charging_points
+                                     SET latitud = %s, longitud = %s
+                                     WHERE id = %s""",
+                                 (latitud, longitud, cp_id))
+                    return True
+            finally:
+                conn.close()
+        except Exception as e:
+            print(f"Error actualizando ubicación CP: {e}")
+            return False
+
+    def actualizar_clima_cp(self, cp_id: str, estado_meteorologico: str, alerta: bool = False):
+        """Actualiza el estado meteorológico de un CP"""
+        try:
+            conn = self._get_connection()
+            try:
+                with conn.cursor() as cursor:
+                    cursor.execute("""UPDATE charging_points
+                                     SET estado_meteorologico = %s, alerta_meteorologica = %s
+                                     WHERE id = %s""",
+                                 (estado_meteorologico, alerta, cp_id))
+                    return True
+            finally:
+                conn.close()
+        except Exception as e:
+            print(f"Error actualizando clima CP: {e}")
+            return False
+
+    def obtener_cps_con_alerta_meteorologica(self) -> List[Dict]:
+        """Obtiene todos los CPs con alerta meteorológica activa"""
+        try:
+            conn = self._get_connection()
+            try:
+                with conn.cursor() as cursor:
+                    cursor.execute("SELECT * FROM charging_points WHERE alerta_meteorologica = TRUE")
+                    return cursor.fetchall()
+            finally:
+                conn.close()
+        except Exception as e:
+            print(f"Error obteniendo CPs con alerta: {e}")
+            return []
+
+    # === MÉTODOS PARA AUDITORÍA (Release 2) ===
+
+    def registrar_auditoria(self, ip_origen: str, modulo: str, accion: str,
+                           parametros: str = None, resultado: str = 'exito', detalle: str = None):
+        """Registra un evento en la tabla de auditoría"""
+        try:
+            conn = self._get_connection()
+            try:
+                with conn.cursor() as cursor:
+                    cursor.execute("""INSERT INTO auditoria
+                                     (ip_origen, modulo, accion, parametros, resultado, detalle)
+                                     VALUES (%s, %s, %s, %s, %s, %s)""",
+                                 (ip_origen, modulo, accion, parametros, resultado, detalle))
+                    return True
+            finally:
+                conn.close()
+        except Exception as e:
+            print(f"Error registrando auditoría: {e}")
+            return False
+
+    def obtener_auditoria(self, modulo: str = None, limit: int = 100) -> List[Dict]:
+        """Obtiene registros de auditoría, opcionalmente filtrados por módulo"""
+        try:
+            conn = self._get_connection()
+            try:
+                with conn.cursor() as cursor:
+                    if modulo:
+                        cursor.execute("""SELECT * FROM auditoria
+                                         WHERE modulo = %s
+                                         ORDER BY timestamp DESC LIMIT %s""",
+                                     (modulo, limit))
+                    else:
+                        cursor.execute("SELECT * FROM auditoria ORDER BY timestamp DESC LIMIT %s", (limit,))
+                    return cursor.fetchall()
+            finally:
+                conn.close()
+        except Exception as e:
+            print(f"Error obteniendo auditoría: {e}")
+            return []

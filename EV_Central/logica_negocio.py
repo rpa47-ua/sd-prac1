@@ -5,6 +5,8 @@ import time
 import threading
 from database import Database
 from kafka_handler import KafkaHandler
+from auditoria import SistemaAuditoria
+from crypto_manager import CryptoManager
 
 class LogicaNegocio:
     def __init__(self, db, kafka_handler, servidor_socket=None):
@@ -15,6 +17,8 @@ class LogicaNegocio:
         self.colas_espera = {}
         self.running = True
         self.lock = threading.Lock()
+        self.auditoria = SistemaAuditoria(db)
+        self.crypto = CryptoManager(db)
 
     def recuperar_suministros_al_inicio(self):
         print("\n[RECUPERACIÓN] Solicitando estado de suministros a todos los Engines...")
@@ -100,14 +104,36 @@ class LogicaNegocio:
             if not cp:
                 print(f"[REGISTRO] Nuevo CP: {cp_id}")
                 self.db.registrar_cp(cp_id)
+
+                # Generar clave de cifrado para el nuevo CP
+                clave = self.crypto.generar_clave_para_cp(cp_id)
+                self.auditoria.registrar_generacion_clave(cp_id)
+                print(f"[CRYPTO] Clave de cifrado generada para {cp_id}")
             else:
                 print(f"[RECONEXIÓN] CP {cp_id} reconectándose (estado: {cp.get('estado', 'desconocido')})")
 
+                # Verificar si tiene clave de cifrado
+                if not cp.get('clave_cifrado'):
+                    print(f"[CRYPTO] CP {cp_id} sin clave, generando...")
+                    self.crypto.generar_clave_para_cp(cp_id)
+                    self.auditoria.registrar_generacion_clave(cp_id)
+                else:
+                    # Restaurar clave desde BD al cache
+                    self.crypto.restaurar_clave_cp(cp_id)
+
             print(f"[OK] Monitor de CP {cp_id} autenticado")
+
+            # Registrar autenticación exitosa
+            self.auditoria.registrar_autenticacion_cp(cp_id, True)
+
             return True
 
         except Exception as e:
             print(f"[ERROR] Error autenticando CP {cp_id}: {e}")
+
+            # Registrar autenticación fallida
+            self.auditoria.registrar_autenticacion_cp(cp_id, False)
+
             return False
 
     def procesar_solicitud_suministro(self, mensaje: dict):
@@ -359,6 +385,7 @@ class LogicaNegocio:
         print(f"\n[AVISO] AVERIA en {cp_id}: {descripcion}")
 
         self.db.actualizar_estado_cp(cp_id, 'averiado')
+        self.auditoria.registrar_averia_cp(cp_id)
 
         with self.lock:  
             if cp_id in self.suministros_activos:
@@ -389,6 +416,7 @@ class LogicaNegocio:
         print(f"\n[OK] CP {cp_id} recuperado de averia")
 
         self.db.actualizar_estado_cp(cp_id, 'activado')
+        self.auditoria.registrar_recuperacion_cp(cp_id)
 
     def procesar_registro_conductor(self, mensaje: dict):
         tipo = mensaje.get('tipo')
@@ -397,6 +425,7 @@ class LogicaNegocio:
         if tipo == 'CONECTAR':
             print(f"[REGISTRO] Conductor {conductor_id} conectado")
             self.db.registrar_conductor(conductor_id, conectado=True)
+            self.auditoria.registrar_registro_conductor(conductor_id)
         elif tipo == 'DESCONECTAR':
             print(f"[DESREGISTRO] Conductor {conductor_id} desconectado")
             self.db.actualizar_estado_conductor(conductor_id, conectado=False)
@@ -518,11 +547,41 @@ class LogicaNegocio:
         self.db.actualizar_estado_cp(cp_id, 'desconectado')
         self._publicar_estado_cp(cp_id, 'desconectado')
 
-        with self.lock:  
+        tenia_suministro = False
+
+        with self.lock:
             if cp_id in self.suministros_activos:
+                tenia_suministro = True
                 info = self.suministros_activos[cp_id]
-                print(f"[INFO] CP {cp_id} tiene suministro activo (ID: {info['suministro_id']})")
-                print(f"[INFO] El suministro continuará en el Engine y se recuperará al reconectar")
+                suministro_id = info['suministro_id']
+                conductor_id = info['conductor_id']
+                consumo_actual = info['consumo_actual']
+                importe_actual = info['importe_actual']
+
+                print(f"[DESCONEXIÓN] Finalizando suministro activo (ID: {suministro_id})")
+
+                # Finalizar suministro en BD
+                self.db.finalizar_suministro(suministro_id, consumo_actual, importe_actual)
+
+                # Enviar ticket al conductor
+                self.kafka.enviar_mensaje('tickets', {
+                    'conductor_id': conductor_id,
+                    'cp_id': cp_id,
+                    'suministro_id': suministro_id,
+                    'consumo_kwh': consumo_actual,
+                    'importe_total': importe_actual
+                })
+                time.sleep(2)
+
+                self.db.marcar_ticket_enviado(suministro_id)
+
+                # Eliminar de suministros activos
+                del self.suministros_activos[cp_id]
+
+                print(f"[OK] Suministro finalizado y ticket enviado a {conductor_id}")
+
+        # Registrar desconexión en auditoría
+        self.auditoria.registrar_desconexion_cp(cp_id, tenia_suministro)
 
 
     def parar_cp(self, cp_id: str):

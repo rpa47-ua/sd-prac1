@@ -151,7 +151,13 @@ class ServidorSocket:
     def detener(self):
         self.running = False
         for socket_cp in self.clientes_conectados.values():
-            socket_cp.close()
+            try:
+                socket_cp.close()
+            except:
+                pass
         if self.server_socket:
-            self.server_socket.close()
+            try:
+                self.server_socket.close()
+            except:
+                pass
         print("[OK] Servidor socket detenido")

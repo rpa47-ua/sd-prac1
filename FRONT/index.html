@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EV Charging - Panel de Control</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Sistema de Gestión de Red de Carga EV</h1>
+            <p class="subtitle">Panel de Monitorización - Release 2</p>
+        </header>
+
+        <!-- Estado General del Sistema -->
+        <section class="status-section">
+            <h2>Estado General del Sistema</h2>
+            <div id="system-status" class="status-grid">
+                <div class="status-card">
+                    <h3>Total CPs</h3>
+                    <p id="total-cps" class="stat-number">-</p>
+                </div>
+                <div class="status-card">
+                    <h3>Activos</h3>
+                    <p id="active-cps" class="stat-number">-</p>
+                </div>
+                <div class="status-card">
+                    <h3>Suministrando</h3>
+                    <p id="supplying-cps" class="stat-number">-</p>
+                </div>
+                <div class="status-card">
+                    <h3>Averiados</h3>
+                    <p id="faulty-cps" class="stat-number">-</p>
+                </div>
+                <div class="status-card">
+                    <h3>Alertas Clima</h3>
+                    <p id="weather-alerts" class="stat-number">-</p>
+                </div>
+                <div class="status-card">
+                    <h3>Suministros Activos</h3>
+                    <p id="active-supplies" class="stat-number">-</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Puntos de Carga -->
+        <section class="cps-section">
+            <h2>Puntos de Carga (CPs)</h2>
+            <div class="table-container">
+                <table id="cps-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Estado</th>
+                            <th>Clima</th>
+                            <th>Alerta</th>
+                            <th>Ubicación</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="cps-tbody">
+                        <tr>
+                            <td colspan="6" class="loading">Cargando datos...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Suministros Activos -->
+        <section class="supplies-section">
+            <h2>Suministros Activos</h2>
+            <div class="table-container">
+                <table id="supplies-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Conductor</th>
+                            <th>CP</th>
+                            <th>Inicio</th>
+                            <th>Consumo (kWh)</th>
+                            <th>Importe (€)</th>
+                            <th>Estado</th>
+                        </tr>
+                    </thead>
+                    <tbody id="supplies-tbody">
+                        <tr>
+                            <td colspan="7" class="loading">Cargando datos...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Alertas Meteorológicas -->
+        <section class="weather-section">
+            <h2>Alertas Meteorológicas</h2>
+            <div id="weather-alerts-container" class="alerts-container">
+                <p class="loading">Cargando alertas...</p>
+            </div>
+        </section>
+
+        <!-- Auditoría -->
+        <section class="audit-section">
+            <h2>Registro de Auditoría (Últimos 50)</h2>
+            <div class="table-container">
+                <table id="audit-table">
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>Módulo</th>
+                            <th>Acción</th>
+                            <th>IP Origen</th>
+                            <th>Resultado</th>
+                        </tr>
+                    </thead>
+                    <tbody id="audit-tbody">
+                        <tr>
+                            <td colspan="5" class="loading">Cargando registros...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <footer>
+            <p>EV Charging Management System - Release 2 | Última actualización: <span id="last-update">-</span></p>
+            <p><span id="connection-status" class="status-disconnected">Desconectado</span></p>
+        </footer>
+    </div>
+
+    <!-- Modal para detalles del CP -->
+    <div id="cp-modal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2>Detalles del Punto de Carga</h2>
+            <div id="cp-details"></div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
