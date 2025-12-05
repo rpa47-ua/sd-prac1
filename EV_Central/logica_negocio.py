@@ -18,7 +18,7 @@ class LogicaNegocio:
         self.running = True
         self.lock = threading.Lock()
         self.auditoria = SistemaAuditoria(db)
-        self.crypto = CryptoManager(db)
+        self.crypto = crypto_manager
 
     def recuperar_suministros_al_inicio(self):
         print("\n[RECUPERACIÓN] Solicitando estado de suministros a todos los Engines...")
@@ -93,7 +93,23 @@ class LogicaNegocio:
         except Exception:
             print(f"[ERROR] Publicando estados completos")
         
-    
+    def procesar_error_cifrado(self, mensaje: dict):
+        """Procesa errores de cifrado recibidos de Kafka"""
+        cp_id = mensaje.get('cp_id')
+        tipo_error = mensaje.get('tipo_error', 'desconocido')
+        
+        print(f"\n[ERROR-CIFRADO] CP {cp_id}: {tipo_error}")
+        
+        # Registrar en auditoría
+        self.auditoria.registrar_error_cifrado(cp_id, tipo_error)
+        
+        # Enviar notificación al front
+        self.kafka.enviar_mensaje('notificaciones', {
+            'tipo': 'ERROR_CIFRADO',
+            'cp_id': cp_id,
+            'mensaje': f'Error de cifrado en CP {cp_id}: {tipo_error}',
+            'timestamp': time.time()
+        })
 
     def autenticar_cp(self, cp_id: str) -> bool:
         print(f"[AUTENTICACIÓN] CP {cp_id} conectándose...")
@@ -351,6 +367,8 @@ class LogicaNegocio:
 
         if final_suministro_id and final_conductor_id:
             self.db.finalizar_suministro(final_suministro_id, consumo_kwh, importe)
+
+            self.auditoria.registrar_suministro_completo(final_suministro_id, final_conductor_id, cp_id, consumo_kwh, importe)
 
             self.kafka.enviar_mensaje('tickets', {
                 'conductor_id': final_conductor_id,

@@ -137,3 +137,72 @@ class SistemaAuditoria:
             resultado='exito' if exito else 'error',
             detalle=f'Clave de cifrado {"restaurada" if exito else "no encontrada"} para {cp_id}'
         )
+
+    def registrar_suministro_completo(self, suministro_id: int, conductor_id: str, cp_id: str, 
+                                    consumo_kwh: float, importe: float, duracion: float = None):
+        """Registra un suministro completo en auditoría"""
+        parametros = {
+            'suministro_id': suministro_id,
+            'conductor_id': conductor_id,
+            'cp_id': cp_id,
+            'consumo_kwh': consumo_kwh,
+            'importe': importe
+        }
+        
+        if duracion:
+            parametros['duracion_segundos'] = duracion
+            
+        detalle = f'Suministro {suministro_id}: {conductor_id} -> {cp_id} | {consumo_kwh:.3f} kWh, {importe:.2f}€'
+        if duracion:
+            detalle += f' | Duración: {duracion:.1f}s'
+            
+        self.registrar_evento(
+            accion='suministro_completado',
+            parametros=parametros,
+            resultado='exito',
+            detalle=detalle
+        )
+
+    def registrar_suministro_interrumpido(self, suministro_id: int, conductor_id: str, cp_id: str,
+                                        consumo_kwh: float, importe: float, motivo: str):
+        """Registra un suministro interrumpido por error"""
+        self.registrar_evento(
+            accion='suministro_interrumpido',
+            parametros={
+                'suministro_id': suministro_id,
+                'conductor_id': conductor_id,
+                'cp_id': cp_id,
+                'consumo_kwh': consumo_kwh,
+                'importe': importe,
+                'motivo': motivo
+            },
+            resultado='error',
+            detalle=f'Suministro {suministro_id} interrumpido - {conductor_id} en {cp_id}: {motivo}'
+        )
+
+    def registrar_suministro_rechazado(self, conductor_id: str, cp_id: str, motivo: str):
+        """Registra un suministro rechazado"""
+        self.registrar_evento(
+            accion='suministro_rechazado',
+            parametros={'conductor_id': conductor_id, 'cp_id': cp_id, 'motivo': motivo},
+            resultado='error',
+            detalle=f'Suministro rechazado - {conductor_id} en {cp_id}: {motivo}'
+        )
+
+    def registrar_suministro_en_cola(self, conductor_id: str, cp_id: str, posicion: int):
+        """Registra un conductor añadido a la cola de espera"""
+        self.registrar_evento(
+            accion='suministro_en_cola',
+            parametros={'conductor_id': conductor_id, 'cp_id': cp_id, 'posicion_cola': posicion},
+            resultado='exito',
+            detalle=f'Conductor {conductor_id} en cola para {cp_id} (posición {posicion})'
+        )
+
+    def registrar_error_cifrado(self, cp_id: str, tipo_error: str):
+        """Registra un error de cifrado/descifrado"""
+        self.registrar_evento(
+            accion='error_cifrado',
+            parametros={'cp_id': cp_id, 'tipo_error': tipo_error},
+            resultado='error',
+            detalle=f'Error de cifrado en CP {cp_id}: {tipo_error}'
+        )

@@ -23,6 +23,7 @@ class EVCentral:
         self.servidor = None
         self.logica = None
         self.panel = None
+        self.crypto = None
 
         self.running = False
 
@@ -44,11 +45,15 @@ class EVCentral:
             print("[ERROR] Error critico: No se pudo conectar a la BD")
             return False
 
+        print("\nInicializando sistema de cifrado simétrico...")
+        self.crypto = CryptoManager(self.db)
+        print("[OK] CryptoManager inicializado")
+
         print("\nMarcando todos los CPs como desconectados...")
         self.db.marcar_todos_cps_desconectados()
 
         print("\nInicializando Kafka...")
-        self.kafka = KafkaHandler(self.kafka_broker)
+        self.kafka = KafkaHandler(self.kafka_broker, self.crypto)
 
         if not self.kafka.inicializar_producer():
             print("[ERROR] Error critico: No se pudo inicializar productor Kafka")
@@ -82,7 +87,8 @@ class EVCentral:
             'solicitudes_suministro', 'respuestas_conductor', 'respuestas_cp',
             'comandos_cp', 'telemetria_cp', 'fin_suministro', 'averias',
             'recuperacion_cp', 'tickets', 'notificaciones', 'estado_cps',
-            'registro_conductores', 'solicitud_estado_engine', 'respuesta_estado_engine', 'estado_central'
+            'registro_conductores', 'solicitud_estado_engine', 
+            'respuesta_estado_engine', 'estado_central', 'errores_cifrado'
         ]
         self.kafka.crear_topics_si_no_existen(all_topics)
 
@@ -95,12 +101,21 @@ class EVCentral:
         self.kafka.registrar_callback('estado_cps', self.logica.procesar_solicitud_listado)
         self.kafka.registrar_callback('registro_conductores', self.logica.procesar_registro_conductor)
         self.kafka.registrar_callback('respuesta_estado_engine', self.logica.procesar_respuesta_estado_engine)
+        self.kafka.registrar_callback('errores_cifrado', self.logica.procesar_error_cifrado)
 
-        topics = ['solicitudes_suministro', 'telemetria_cp', 'fin_suministro', 'averias', 'recuperacion_cp', 'estado_cps', 'registro_conductores', 'respuesta_estado_engine']
+        topics = ['solicitudes_suministro', 'telemetria_cp', 'fin_suministro', 'averias', 'recuperacion_cp', 'estado_cps', 'registro_conductores', 'respuesta_estado_engine','errores_cifrado']
         self.kafka.suscribirse(topics)
 
         print("\nRecuperando suministros del sistema...")
         self.logica.recuperar_suministros_al_inicio()
+
+        print("\nVerificando claves de cifrado para CPs existentes...")
+        cps = self.db.obtener_todos_los_cps()
+        for cp in cps:
+            cp_id = cp['id']
+            if not cp.get('clave_cifrado'):
+                print(f"[CRYPTO] Generando clave para CP {cp_id} sin clave...")
+                self.crypto.generar_clave_para_cp(cp_id)
 
         print("\nInicializando panel de monitorizacion GUI...")
         self.panel = PanelGUI(self.logica)
